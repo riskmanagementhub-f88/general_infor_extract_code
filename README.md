@@ -7,7 +7,6 @@
 - Thanh toán đúng hạn
 - Nhắc nợ trước hạn
 - Cảnh báo Chip
-- Code update tự động các thông tin:
 + Update thông tin Daily_Rolled_KD
 + Update Shop_detail và KPI từ bên Marketing
 + Update Chip_report
