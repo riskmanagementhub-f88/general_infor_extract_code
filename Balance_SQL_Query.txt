@@ -87,7 +87,8 @@ from (
 	Lag(CloseDate) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as pre_pawn_last_close_day
 from [dwh].[dbo].Pawn
 where status in (-1,1, 14, 77, 88, 99)
-) p on p.Pawnid = oc.PAWN_WID
+and shopcode not like '%HS%'
+and shopcode not like '%TEST%') p on p.Pawnid = oc.PAWN_WID
 		left join ( select * from (
 						select *,row_number()
 						over (partition by pawn_wid  order by open_dt  desc 
@@ -145,7 +146,9 @@ from (
 	Lag(FromDate) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as pre_pawn_last_open_day,
 	Lag(CloseDate) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as pre_pawn_last_close_day
 from [dwh].[dbo].Pawn
-where status in (-1,1, 14, 77, 88, 99) ) p on p.Pawnid = oc.PAWN_WID
+where status in (-1,1, 14, 77, 88, 99) 
+and shopcode not like '%HS%'
+and shopcode not like '%TEST%') p on p.Pawnid = oc.PAWN_WID
 		left join ( select * from (
 						select *,row_number()
 						over (partition by pawn_wid  order by open_dt  desc 
