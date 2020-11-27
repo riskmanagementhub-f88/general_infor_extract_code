@@ -11,16 +11,14 @@ and (ky_ketoan is null or ky_ketoan>=dwh.dbo.getYearMonth(@ext_date))
 
 # Code lấy Balance
 declare @check_date date ='2020-07-22'
-select pod.*, po1.loan_package, po1.cus_type customer_type,po1.package_money_range,po1.package_time_range, 
-po1.previous_shop_code, po1."contract_open_type", case when chip_inst.g_imei is null then N'No_Inst' else N'Yes_Inst' end "chip_installed",
- sd.area , sd.name "shopname", chip_inst.*, 
+select pod.*,  case when chip_inst.g_imei is null then N'No_Inst' else N'Yes_Inst' end "chip_installed",chip_inst.*, 
  case when chip_inst.g_imei is not null  then 'Y'
  else 'N' end "actually_installed", 
  case when chip_inst.g_imei is not null and pod.pos_imei is null then 'G.yes-P.no'
  when chip_inst.g_imei is not null and pod.pos_imei = chip_inst.g_imei then 'G-P matching'
  when chip_inst.g_imei is not null and ((isnumeric(pod.pos_imei) = 1 
  and len(pod.pos_imei)>12 and len(pod.pos_imei)<17 ) or pod.pos_imei like '%A5E%')
- and chip_inst.g_imei <> pod.pos_imei then 'G-P not matching'
+ and chip_inst.g_imei <> pod.pos_imei then 'AG-P not matching'
  when chip_inst.g_imei is null and ((isnumeric(pod.pos_imei) = 1 
  and len(pod.pos_imei)>12 and len(pod.pos_imei)<17 and pod.pos_imei not like N'%000000%')
  or pod.pos_imei like '%A5E%') then 'G.no-P.yes'
@@ -39,93 +37,120 @@ po1.previous_shop_code, po1."contract_open_type", case when chip_inst.g_imei is 
 	    when TuoiNo<91 then '4. 61-90'
 		 when TuoiNo<121 then '5. 91-120'
 		  when TuoiNo<151 then '6. 121-150'
-else '7. 151++' end "bucket",
-case when CREATED = @check_date  then 'this_week'
-   when CREATED = dateadd(d, -7, @check_date)  then 'last_week'
-   when CREATED = dateadd(m, -1, @check_date) then 'last_month'
-   else N'Loại' end "period_compare"
+else '7. 151++' end "bucket"
    FROM [dwh].[dbo].[PawnOverdue]
-   where /*CategoryCode like '%15%'
-   and YEAR(created) = year(getdate())*/
-   (CREATED = @check_date
-   or CREATED = dateadd(d, -7, @check_date)
-   or CREATED = dateadd(m, -1, @check_date))
+   where CREATED = @check_date
    and CategoryName like N'%Đăng ký %'
-   and ShopCode not like '%HS%'  and ShopCode not like '%TEST%') pod
-left join (select po.*, case when po.ShopCode = po.previous_shop_code then N'Mở 2 HĐ cùng PGD'
-else N'Mở 2 HĐ khác PGD' end "2 hđ liên tiếp mở cùng hay khác PGD?",
-case when po.previous_pawn_status is null then N'KH mới vay lần đầu' 
-when po.previous_pawn_status in (77,88,99) then N'KH đang nợ xấu'
-when po.previous_pawn_status = 14 then N'Vay thêm'
-when po.previous_pawn_status = 1 and pre_pawn_last_close_day = po.fromdate then N'Đáo hạn'
-else (
-case when po.duration>180 then N'6.Mở lại từ 181 ngày'
-when po.duration>90 then N'5.Mở lại từ 91-180 ngày' 
-when po.duration> 60 then N'4.Mở lại từ 61-90 ngày'
-when po.duration> 30 then N'3.Mở lại từ 31-60 ngày'
-else N'2.Mở lại từ 1-30 ngày' end ) end "contract_open_type",
-   case when po.previous_pawn is null then N'Khách mới' else N'Khách cũ' end "cus_type"
-from (select FromDate,closedate, DATEDIFF(d, Lag(CloseDate) over (PARTITION BY customerid order by fromdate),FromDate) duration,pawnid, CodeNo,ShopCode,Shopid,  
-case when PackageCode is null then N'Vay thường'
-else packagecode end "loan_package",  case when (LoanMoneyOrg - [InsurranceMoney]) <= 50000000 then '0. <=50tr'
-  when (LoanMoneyOrg - [InsurranceMoney]) <= 100000000 then '1. 50-100tr'
-  when (LoanMoneyOrg - [InsurranceMoney]) <= 200000000 then '2. 100-200tr'
-  when PackageCode is not null and  (LoanMoneyOrg - [InsurranceMoney]) > 200000000 then N'4. Ngoại lệ'
-  when PackageCode is null and  (LoanMoneyOrg - [InsurranceMoney]) <= 300000000 then '3. 200-300tr'
-  else N'4. Ngoại lệ' end "package_money_range", case when frequency <= 30 then N'1. Kỳ hạn 1 tháng'
-  when frequency <= 90 then N'2. Kỳ hạn 3 tháng'
-  when frequency <= 180 then N'3. Kỳ hạn 6 tháng'
-  when frequency <= 270 then N'4. Kỳ hạn 9 tháng'
-  when frequency <= 360 then N'5. Kỳ hạn 12 tháng'
-  else N'6. Ngoại lệ' end package_time_range,
-  LAG (CodeNo) over (PARTITION BY customerid ORDER BY fromdate asc) as previous_pawn, 
-/*Lag(MoneyCurrent) over (PARTITION BY customerid order by fromdate) as balance_of_previous_pawn,
-Lag(LoanMoneyOrg) over (PARTITION BY customerid order by fromdate) as previous_loan_org,
-Lag(InsurranceMoney) over (PARTITION BY customerid order by fromdate) as previous_pawn_insurance,*/
-Lag(Status) over (PARTITION BY customerid order by fromdate) as previous_pawn_status,
-case when Lag(PackageCode) over (PARTITION BY customerid order by fromdate) is not null then N'Vay nhanh' else N'Vay thường' end "previous_pawn_package",
-Lag(FromDate) over (PARTITION BY customerid order by fromdate) as pre_pawn_last_open_day,
-Lag(CloseDate) over (PARTITION BY customerid order by fromdate) as pre_pawn_last_close_day,
-Lag(ShopCode) over (PARTITION BY customerid order by fromdate) as previous_shop_code
-from  [dwh].[dbo].[Pawn]
-where /*CategoryCode like '%15%'*/
- status not in (11, 22, 15)
-and ShopCode not like '%HS%' 
-and  ShopCode not like '%TEST%') po ) po1 on po1.Pawnid =pod.PawnID
-left join (select ShopID, Code, Name, 
- case when AreaID = 1 then 'MB' 
-  when AreaID = 2 then 'MN' else 'MT' end "area"
-  from [dwh].[dbo].[ShopDetail] 
-  where AreaID is not null) sd on sd.ShopID = pod.ShopID
+   and ShopCode not like '%HS%' and ShopCode not like '%TEST%') pod
 left join 
-(select sort_chip.*
-from (select [PAWN_WID] tbchip_pawnid,[IMEI] g_imei,[CREATED_DT] tbchip_active ,[OPEN_DT] chip_insday,[CLOSE_DT] chip_inactive_time,[MESSAGE_NOTIFY] message_notify
-from [dwh].[dbo].[W_CHIP_SERIAL_F] ) sort_chip
-inner join (select PAWN_WID, max(open_dt) max_chip_inst 
-			from [dwh].[dbo].[W_CHIP_SERIAL_F]
-			group by PAWN_WID) csm on (csm.PAWN_WID = sort_chip.tbchip_pawnid and csm.max_chip_inst = sort_chip.chip_insday)) chip_inst 
+(select sort_chip.*,  sub.CREATED_DT 'last_warning_time', sub.MESSAGE_NOTIFY 'chip_note', sub.warn_y_n, sub.num_warnings, sub.num_reply, sub.ins_sameday,
+sub.WARNING_TYPE warning_type, sub.WARNING_TITLE warning_title, sub.WARNING_DESCRIPTION 'w_descript', sub.COMMNET_TITLE 'comment1_title',
+sub.COMMENT_DESCRIPTION 'cmt_descript', sub.previous_pawn_id, sub.pre_pawn_last_open_day,
+sub.pre_pawn_last_close_day, sub.balance_of_previous_pawn, sub.previous_loan_org, sub.previous_pawn_status, sub.previous_pawn_package
+from (
+	select [PAWN_WID] tbchip_pawnid,[IMEI] g_imei,[CREATED_DT] tbchip_active ,[OPEN_DT] chip_insday,
+	[CLOSE_DT] chip_inactive_time, [MESSAGE_NOTIFY] message_notify 
+	from (
+						select *,row_number()
+						over (partition by pawn_wid  order by [CREATED_DT] desc
+						) row_id 
+			 from [dwh].[dbo].[W_CHIP_SERIAL_F]
+			 ) tab
+			 where row_id=1) sort_chip
+	inner join (
+		select oc.*, case when cw.num_warnings is null then 'No_W'
+		else 'Yes_W' end warn_y_n, cw.num_warnings, cw.num_reply, 
+		case when cast(oc.CREATED_DT as date) <> p.FromDate then 'set_dif_day'
+		else 'set_same_day' end "ins_sameday", lw.WARNING_TYPE, lw.WARNING_TITLE, lw.WARNING_DESCRIPTION,
+		lw.CONTACT_RES_TYPE, lw.COMMNET_TITLE, lw.COMMENT_DESCRIPTION, p.*
+		FROM (
+			select c1.* 
+			from [dwh].[dbo].[W_CHIP_SERIAL_F] c1
+			inner join (
+				select PAWN_WID, max(CREATED_DT) max_chip_inst 
+				from [dwh].[dbo].[W_CHIP_SERIAL_F]
+				group by PAWN_WID) csm on (csm.PAWN_WID = c1.PAWN_WID and csm.max_chip_inst = c1.CREATED_DT) 
+				) oc
+		left join (select PAWN_WID, count(pawn_wid) num_warnings, 
+			 sum(case when commnet_title is not null then 1 else 0 end) num_reply
+				FROM [dwh].[dbo].[W_CHIP_SERIAL_WARNING_F]
+				group by PAWN_WID) cw on cw.PAWN_WID = oc.PAWN_WID
+		left join (select FromDate, Pawnid, Lag (Pawnid) over (PARTITION BY customerid, [CategoryCode] ORDER BY fromdate asc) as previous_pawn_id,
+	Lag (CodeNo) over (PARTITION BY customerid, [CategoryCode] ORDER BY fromdate asc) as previous_pawn, 
+	Lag(MoneyCurrent) over (PARTITION BY customerid,[CategoryCode] order by fromdate) as balance_of_previous_pawn,
+	Lag(LoanMoneyOrg) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as previous_loan_org,
+	Lag(InsurranceMoney) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as previous_pawn_insurance,
+	Lag(Status) over (PARTITION BY customerid,[CategoryCode] order by fromdate) as previous_pawn_status,
+	Lag(ShopCode) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as previous_shop_code,
+	Lag(PackageCode) over (PARTITION BY customerid, [CategoryCode] order by fromdate) "previous_pawn_package",
+	Lag(FromDate) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as pre_pawn_last_open_day,
+	Lag(CloseDate) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as pre_pawn_last_close_day
+from [dwh].[dbo].Pawn
+where status in (-1,1, 14, 77, 88, 99)
+) p on p.Pawnid = oc.PAWN_WID
+		left join ( select * from (
+						select *,row_number()
+						over (partition by pawn_wid  order by open_dt  desc 
+						) row_id 
+			 from W_CHIP_SERIAL_WARNING_F) tab
+			 where row_id=1) lw on lw.PAWN_WID = oc.PAWN_WID) sub on sub.pawn_wid = sort_chip.tbchip_pawnid
+) chip_inst 
 			on chip_inst.tbchip_pawnid = pod.[PawnID]
+where chip_inst.previous_pawn_status in (-1,1, 14, 77, 88, 99)
+			or chip_inst.previous_pawn_status is null
 
 
 ### CHIP CHIP CHIP
-select oc.*, case when cw.num_warnings is null then 'No_W'
-  else 'Yes_W' end warn_y_n, cw.num_warnings, cw.num_reply, 
-  case when cast(oc.CREATED_DT as date) <> p.FromDate then 'set_dif_day'
-  else 'set_same_day' end "ins_sameday", lw.WARNING_TYPE, lw.WARNING_TITLE, lw.WARNING_DESCRIPTION,
-  lw.CONTACT_RES_TYPE, lw.COMMNET_TITLE, lw.COMMENT_DESCRIPTION
-  FROM (select c1.* 
-  from [dwh].[dbo].[W_CHIP_SERIAL_F] c1
-  inner join (select PAWN_WID, max(CREATED_DT) max_chip_inst 
-			from [dwh].[dbo].[W_CHIP_SERIAL_F]
-group by PAWN_WID) csm on (csm.PAWN_WID = c1.PAWN_WID and csm.max_chip_inst = c1.CREATED_DT )) oc
-  left join (select PAWN_WID, count(pawn_wid) num_warnings, 
-  sum(case when commnet_title is not null then 1 else 0 end) num_reply
-   FROM [dwh].[dbo].[W_CHIP_SERIAL_WARNING_F]
-   group by PAWN_WID) cw on cw.PAWN_WID = oc.PAWN_WID
-left join [dwh].[dbo].Pawn p on p.Pawnid = oc.PAWN_WID
-left join ( select * from (
-select *,row_number()
- over (partition by pawn_wid  order by open_dt,comment_dt desc 
-	 ) row_id 
+select sort_chip.*,  sub.CREATED_DT 'last_warning_time', sub.MESSAGE_NOTIFY 'chip_note', sub.warn_y_n, sub.num_warnings, sub.num_reply, sub.ins_sameday,
+sub.WARNING_TYPE warning_type, sub.WARNING_TITLE warning_title, sub.WARNING_DESCRIPTION 'w_descript', sub.COMMNET_TITLE 'comment1_title',
+sub.COMMENT_DESCRIPTION 'cmt_descript', sub.previous_pawn_id, sub.pre_pawn_last_open_day,
+sub.pre_pawn_last_close_day, sub.balance_of_previous_pawn, sub.previous_loan_org, sub.previous_pawn_status, sub.previous_pawn_package
+from (
+	select [PAWN_WID] tbchip_pawnid,[IMEI] g_imei,[CREATED_DT] tbchip_active ,[OPEN_DT] chip_insday,
+	[CLOSE_DT] chip_inactive_time, [MESSAGE_NOTIFY] message_notify 
+	from (
+						select *,row_number()
+						over (partition by pawn_wid  order by [CREATED_DT] desc
+						) row_id 
+			 from [dwh].[dbo].[W_CHIP_SERIAL_F]
+			 ) tab
+			 where row_id=1) sort_chip
+
+	inner join (
+		select oc.*, case when cw.num_warnings is null then 'No_W'
+		else 'Yes_W' end warn_y_n, cw.num_warnings, cw.num_reply, 
+		case when cast(oc.CREATED_DT as date) <> p.FromDate then 'set_dif_day'
+		else 'set_same_day' end "ins_sameday", lw.WARNING_TYPE, lw.WARNING_TITLE, lw.WARNING_DESCRIPTION,
+		lw.CONTACT_RES_TYPE, lw.COMMNET_TITLE, lw.COMMENT_DESCRIPTION, p.*
+		FROM (
+			select c1.* 
+			from [dwh].[dbo].[W_CHIP_SERIAL_F] c1
+			inner join (
+				select PAWN_WID, max(CREATED_DT) max_chip_inst 
+				from [dwh].[dbo].[W_CHIP_SERIAL_F]
+				group by PAWN_WID) csm on (csm.PAWN_WID = c1.PAWN_WID and csm.max_chip_inst = c1.CREATED_DT) 
+				) oc
+		left join (select PAWN_WID, count(pawn_wid) num_warnings, 
+			 sum(case when commnet_title is not null then 1 else 0 end) num_reply
+				FROM [dwh].[dbo].[W_CHIP_SERIAL_WARNING_F]
+				group by PAWN_WID) cw on cw.PAWN_WID = oc.PAWN_WID
+		left join (select FromDate, Pawnid, Lag (Pawnid) over (PARTITION BY customerid, [CategoryCode] ORDER BY fromdate asc) as previous_pawn_id,
+	Lag (CodeNo) over (PARTITION BY customerid, [CategoryCode] ORDER BY fromdate asc) as previous_pawn, 
+	Lag(MoneyCurrent) over (PARTITION BY customerid,[CategoryCode] order by fromdate) as balance_of_previous_pawn,
+	Lag(LoanMoneyOrg) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as previous_loan_org,
+	Lag(InsurranceMoney) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as previous_pawn_insurance,
+	Lag(Status) over (PARTITION BY customerid,[CategoryCode] order by fromdate) as previous_pawn_status,
+	Lag(ShopCode) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as previous_shop_code,
+	Lag(PackageCode) over (PARTITION BY customerid, [CategoryCode] order by fromdate) "previous_pawn_package",
+	Lag(FromDate) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as pre_pawn_last_open_day,
+	Lag(CloseDate) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as pre_pawn_last_close_day
+from [dwh].[dbo].Pawn
+where status in (-1,1, 14, 77, 88, 99) ) p on p.Pawnid = oc.PAWN_WID
+		left join ( select * from (
+						select *,row_number()
+						over (partition by pawn_wid  order by open_dt  desc 
+						) row_id 
 			 from W_CHIP_SERIAL_WARNING_F) tab
-			 where row_id=1) lw on lw.PAWN_WID = oc.PAWN_WID
+			 where row_id=1) lw on lw.PAWN_WID = oc.PAWN_WID) sub on sub.pawn_wid = sort_chip.tbchip_pawnid
+Where sub.previous_pawn_status in (-1,1, 14, 77, 88, 99)
+Or sub.previous_pawn_status is null
