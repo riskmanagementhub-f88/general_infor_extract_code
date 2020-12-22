@@ -1,5 +1,4 @@
 #1 Code lấy Balance đơn giản- bỏ write-off
-Updated by:Tran Duc Nam @10/11/2020 11:13 SA
 
 declare @ext_date date='2020-09-30'
 select CREATED,PawnID,ContractCode,ShopName,CurrentMoney,CategoryName,ShopCode,FromDate,TuoiNo,Status,ky_ketoan from dwh.dbo.PawnOverdue po
