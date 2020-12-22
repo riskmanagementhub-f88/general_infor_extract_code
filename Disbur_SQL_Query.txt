@@ -1,0 +1,214 @@
+Check lỗi duplicate của Chip
+Sửa lại logic phần khách cũ/ khách mới
+
+
+
+#1 Code lấy giá trị giải ngân
+
+declare @start_date date ='2020-07-17'
+declare  @end_date date ='2020-07-23'
+select po.*,kt.PaperType, sd.area, case when po.Created>= @start_date 
+and po.Created<=@end_date then N'1.Current_period'
+when po.fromdate<=dateadd(DAY,-1,@start_date) and 
+po.FromDate>= dateadd(day,-DATEDIFF(day,@start_date,@end_date),dateadd(DAY,-1,@start_date)) 
+then N'2.Same_period_last_week'
+when po.fromdate >= DATEADD(m, -1, @start_date) and po.fromdate <= DATEADD(day, DATEDIFF(d,@start_date,@end_date), DATEADD(m, -1, @start_date)) then N'3.Same_period_last_month'
+else N'4.Blank_period' end 'time_range_cal_auto',
+case when po.previous_pawn is null then N'Khách mới' else N'Khách cũ' end "cus_type",
+case when po.previous_pawn_status is null then N'KH mới vay lần đầu' 
+when po.previous_pawn_status in (77,88,99) then N'KH đang nợ xấu'
+when po.previous_pawn_status = 14 then N'7.Vay thêm'
+when po.previous_pawn_status = 1 and pre_pawn_last_close_day = FromDate then N'0.Đáo hạn'
+else (
+case when po.sleep_day>180 then N'6.Mở lại từ 181 ngày'
+when po.sleep_day>90 then N'5.Mở lại từ 91-180 ngày' 
+when po.sleep_day> 60 then N'4.Mở lại từ 61-90 ngày'
+when po.sleep_day> 30 then N'3.Mở lại từ 31-60 ngày'
+else N'2.Mở lại từ 1-30 ngày' end ) end "open_type",
+case when chip_inst.g_imei is null then N'Set_up_chip' else N'No_chip' end "set_up_chip",
+case when po.ShopCode = po.previous_shop_code then N'Same_shop'
+when previous_pawn is not null and po.ShopCode <> po.previous_shop_code then N'Diff_shop' end "open_at_same_shop", chip_inst.*
+from (select  LoanMoneyOrg, DATEDIFF(d, Lag(CloseDate) over (PARTITION BY customerid order by fromdate),Created) sleep_day, 
+(LoanMoneyOrg - [InsurranceMoney]) "net_disbur",Created,CategoryCode, ShopCode, pawnid, CodeNo, FromDate, ToDate, Frequency,shopID,  case when PackageCode is null then N'Vay thường'
+else PackageCode end "package_type", case when STATUS = -1 then N'Đã thanh lý'
+  when STATUS = 1 then N'Đã đóng'
+  when STATUS = 14 then N'Đang vay'
+  when STATUS in ('77','88','99') then N'Nợ xấu'
+  else N'Nháp' end pawn_status, case when (LoanMoneyOrg - [InsurranceMoney]) <= 50000000 then '0. <=50tr'
+  when (LoanMoneyOrg - [InsurranceMoney]) <= 100000000 then '1. 50-100tr'
+  when (LoanMoneyOrg - [InsurranceMoney]) <= 200000000 then '2. 100-200tr'
+  when PackageCode is not null and  (LoanMoneyOrg - [InsurranceMoney]) > 200000000 then N'4. Ngoại lệ'
+  when PackageCode is null and  (LoanMoneyOrg - [InsurranceMoney]) <= 300000000 then '3. 200-300tr'
+  else N'4. Ngoại lệ' end "package_money_range", case when frequency <= 30 then N'1. Kỳ hạn 1 tháng'
+  when frequency <= 90 then N'2. Kỳ hạn 3 tháng'
+  when frequency <= 180 then N'3. Kỳ hạn 6 tháng'
+  when frequency <= 270 then N'4. Kỳ hạn 9 tháng'
+  when frequency <= 360 then N'5. Kỳ hạn 12 tháng'
+  else N'6. Ngoại lệ' end package_time_range,
+  LAG (CodeNo) over (PARTITION BY customerid ORDER BY fromdate asc) as previous_pawn, 
+Lag(MoneyCurrent) over (PARTITION BY customerid order by fromdate) as balance_of_previous_pawn,
+Lag(LoanMoneyOrg) over (PARTITION BY customerid order by fromdate) as previous_loan_org,
+Lag(InsurranceMoney) over (PARTITION BY customerid order by fromdate) as previous_pawn_insurance,
+Lag(Status) over (PARTITION BY customerid order by fromdate) as previous_pawn_status,
+Lag(ShopCode) over (PARTITION BY customerid order by fromdate) as previous_shop_code,
+case when Lag(PackageCode) over (PARTITION BY customerid order by fromdate) is not null then N'Vay nhanh' else N'Vay thường' end "previous_pawn_package",
+Lag(FromDate) over (PARTITION BY customerid order by fromdate) as pre_pawn_last_open_day,
+Lag(CloseDate) over (PARTITION BY customerid order by fromdate) as pre_pawn_last_close_day
+from  [dwh].[dbo].[Pawn]
+where /*CategoryCode like '%17%' and */
+ status not in (11, 22, 15)
+and (shopcode not like '%HS%' or shopcode not like '%TEST%')
+order by Pawnid desc
+) po 
+left join (select ShopID, Code, Name, case when AreaID = 1 then 'MB' else 'MN' end "area"
+from [dwh].[dbo].[ShopDetail] 
+where AreaID is not null) sd on sd.ShopID = po.ShopID
+left join (select sort_chip.*
+from (select [PAWN_WID] tbchip_pawnid,[IMEI] g_imei,[CREATED_DT] tbchip_active ,[OPEN_DT] chip_insday,[CLOSE_DT] chip_inactive_time,[MESSAGE_NOTIFY] message_notify
+from [dwh].[dbo].[W_CHIP_SERIAL_F] ) sort_chip
+inner join (select PAWN_WID, max(open_dt) max_chip_inst 
+			from [dwh].[dbo].[W_CHIP_SERIAL_F]
+			group by PAWN_WID) csm on (csm.PAWN_WID = sort_chip.tbchip_pawnid and csm.max_chip_inst = sort_chip.chip_insday)) chip_inst 
+			on chip_inst.tbchip_pawnid = po.[PawnID]
+left join W_CUSTOMER_PAPERs kt on kt.pawnid=po.Pawnid
+where po.Created >= dateadd(MONTH, -1, @start_date)
+
+
+
+VERSION 2: Tách phần Chip ra khỏi đoạn code để thành 1 bảng theo dõi chip riêng. 
+16:06 27/7/2020
+
+declare @start_date date ='2020-07-22'
+declare  @end_date date ='2020-07-23'
+select po.*, kt.PaperType, sd.area, 
+case when po.previous_pawn is null then N'Khách mới' else N'Khách cũ' end "cus_type",
+case when po.previous_pawn_status is null then N'KH mới vay lần đầu' 
+when po.previous_pawn_status in (77,88,99) then N'KH đang nợ xấu'
+when po.previous_pawn_status = 14 then N'7.Vay thêm'
+when po.previous_pawn_status = 1 and pre_pawn_last_close_day = FromDate then N'0.Đáo hạn'
+else (
+case when po.sleep_day>180 then N'6.Mở lại từ 181 ngày'
+when po.sleep_day>90 then N'5.Mở lại từ 91-180 ngày' 
+when po.sleep_day> 60 then N'4.Mở lại từ 61-90 ngày'
+when po.sleep_day> 30 then N'3.Mở lại từ 31-60 ngày'
+else N'2.Mở lại từ 1-30 ngày' end ) end "open_type",
+case when po.ShopCode = po.previous_shop_code then N'Same_shop'
+when previous_pawn is not null and po.ShopCode <> po.previous_shop_code then N'Diff_shop' end "open_at_same_shop"
+from
+(
+Select right([CodeNo], len([CodeNo]) - 5) as shorten_code, LoanMoneyOrg, 
+DATEDIFF(d, Lag(CloseDate) over (PARTITION BY customerid order by fromdate),Fromdate) sleep_day, 
+(LoanMoneyOrg - [InsurranceMoney]) "net_disbur",Created,CategoryCode, ShopCode, pawnid, CodeNo, FromDate, ToDate, Frequency,shopID,  
+case when PackageCode is null then N'Vay thường'
+else PackageCode end "package_type", 
+case when STATUS = -1 then N'Đã thanh lý'
+  when STATUS = 1 then N'Đã đóng'
+  when STATUS = 14 then N'Đang vay'
+  when STATUS in ('77','88','99') then N'Nợ xấu'
+  else N'Nháp' end pawn_status, 
+  case when CategoryCode like '%17%' then
+		case when (LoanMoneyOrg - [InsurranceMoney]) <= 3000000 then '0. <=3tr'
+		when (LoanMoneyOrg - [InsurranceMoney]) <= 10000000 then '1. 3-10tr'
+		when (LoanMoneyOrg - [InsurranceMoney]) <= 15000000 then '2. 10-15tr'
+		when (LoanMoneyOrg - [InsurranceMoney]) <= 25000000 then '3. 15-25tr'
+		else '4. >25tr' end "package_money_range"
+  when CategoryCode like '%15%' then
+		case when (LoanMoneyOrg - [InsurranceMoney]) <= 50000000 then '0. <=50tr'
+		when (LoanMoneyOrg - [InsurranceMoney]) <= 100000000 then '2. 100-200tr'
+		when PackageCode is not null and  (LoanMoneyOrg - [InsurranceMoney]) > 200000000 then N'4. >200tr'
+		when PackageCode is null and  (LoanMoneyOrg - [InsurranceMoney]) <= 300000000 then '3. 200-300tr'
+		else N'4. >300tr' end 
+ end "package_money_range"
+	, case when frequency <= 30 then N'1. Kỳ hạn 1 tháng'
+  when frequency <= 90 then N'2. Kỳ hạn 3 tháng'
+  when frequency <= 180 then N'3. Kỳ hạn 6 tháng'
+  when frequency <= 270 then N'4. Kỳ hạn 9 tháng'
+  when frequency <= 360 then N'5. Kỳ hạn 12 tháng'
+  else N'6. Ngoại lệ' end package_time_range,
+  Lag (Pawnid) over (PARTITION BY customerid, [CategoryCode] ORDER BY fromdate asc) as previous_pawn_id,
+	Lag (CodeNo) over (PARTITION BY customerid, [CategoryCode] ORDER BY fromdate asc) as previous_pawn, 
+	Lag(MoneyCurrent) over (PARTITION BY customerid,[CategoryCode] order by fromdate) as balance_of_previous_pawn,
+	Lag(LoanMoneyOrg) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as previous_loan_org,
+	Lag(InsurranceMoney) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as previous_pawn_insurance,
+	Lag(Status) over (PARTITION BY customerid,[CategoryCode] order by fromdate) as previous_pawn_status,
+	Lag(ShopCode) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as previous_shop_code,
+Lag(PackageCode) over (PARTITION BY customerid, [CategoryCode] order by fromdate) "previous_pawn_package",
+	Lag(FromDate) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as pre_pawn_last_open_day,
+	Lag(CloseDate) over (PARTITION BY customerid, [CategoryCode] order by fromdate) as pre_pawn_last_close_day
+from  [dwh].[dbo].[Pawn]
+where 1 = 1
+And status in (-1,1, 14, 77, 88, 99)
+	and shopcode not like '%HS%' and 
+shopcode not like '%TEST%'
+	and Created>= @start_date 
+	and Created<=@end_date) po
+left join (select ShopID, Code, Name, case when AreaID = 1 then 'MB' 
+when AreaID = 2 then 'MN' else 'MT' end "area"
+from [dwh].[dbo].[ShopDetail] 
+where AreaID is not null) sd on sd.ShopID = po.ShopID
+left join (select distinct(cp1.PawnID), cp2.PaperType from W_CUSTOMER_PAPERs cp1
+inner join W_CUSTOMER_PAPERs cp2 on cp1.PawnID=cp2.PawnID) kt on kt.pawnid=po.Pawnid
+Where po.previous_pawn_status in (-1,1, 14, 77, 88, 99)
+Or po.previous_pawn_status is null
+
+declare @start_date date ='2020-07-17'
+declare  @end_date date ='2020-07-23'
+select po.*,kt.PaperType, sd.area, case when po.Created>= @start_date and po.Created<=@end_date then N'1.Current_period'
+when po.fromdate<=dateadd(DAY,-1,@start_date) and po.FromDate>= dateadd(day,-DATEDIFF(day,@start_date,@end_date),dateadd(DAY,-1,@start_date)) then N'2.Same_period_last_week'
+when po.fromdate >= DATEADD(m, -1, @start_date) and po.fromdate <= DATEADD(day, DATEDIFF(d,@start_date,@end_date), DATEADD(m, -1, @start_date)) then N'3.Same_period_last_month'
+else N'4.Blank_period' end 'time_range_cal_auto',
+case when po.previous_pawn is null then N'Khách mới' else N'Khách cũ' end "cus_type",
+case when po.previous_pawn_status is null then N'KH mới vay lần đầu' 
+when po.previous_pawn_status in (77,88,99) then N'KH đang nợ xấu'
+when po.previous_pawn_status = 14 then N'7.Vay thêm'
+when po.previous_pawn_status = 1 and pre_pawn_last_close_day = cast(Created as date) then N'0.Đáo hạn'
+else (
+case when po.sleep_day>180 then N'6.Mở lại từ 181 ngày'
+when po.sleep_day>90 then N'5.Mở lại từ 91-180 ngày' 
+when po.sleep_day> 60 then N'4.Mở lại từ 61-90 ngày'
+when po.sleep_day> 30 then N'3.Mở lại từ 31-60 ngày'
+else N'2.Mở lại từ 1-30 ngày' end ) end "open_type",
+case when chip_inst.imei is null then N'Set_up_chip' else N'No_chip' end "set_up_chip",
+case when po.ShopCode = po.previous_shop_code then N'Same_shop'
+when previous_pawn is not null and po.ShopCode <> po.previous_shop_code then N'Diff_shop' end "open_at_same_shop", chip_inst.*
+from (select LoanMoneyOrg, DATEDIFF(d, Lag(CloseDate) over (PARTITION BY customerid order by fromdate),Created) sleep_day, 
+(LoanMoneyOrg - [InsurranceMoney]) "net_disbur",Created,CategoryCode, ShopCode, pawnid, CodeNo, FromDate, ToDate, Frequency,shopID,  case when PackageCode is null then N'Vay thường'
+else PackageCode end "package_type", case when STATUS = -1 then N'Đã thanh lý'
+  when STATUS = 1 then N'Đã đóng'
+  when STATUS = 14 then N'Đang vay'
+  when STATUS in ('77','88','99') then N'Nợ xấu'
+  else N'Nháp' end pawn_status, case when (LoanMoneyOrg - [InsurranceMoney]) <= 50000000 then '0. <=50tr'
+  when (LoanMoneyOrg - [InsurranceMoney]) <= 100000000 then '1. 50-100tr'
+  when (LoanMoneyOrg - [InsurranceMoney]) <= 200000000 then '2. 100-200tr'
+  when PackageCode is not null and  (LoanMoneyOrg - [InsurranceMoney]) > 200000000 then N'4. Ngoại lệ'
+  when PackageCode is null and  (LoanMoneyOrg - [InsurranceMoney]) <= 300000000 then '3. 200-300tr'
+  else N'4. Ngoại lệ' end "package_money_range", case when frequency <= 30 then N'1. Kỳ hạn 1 tháng'
+  when frequency <= 90 then N'2. Kỳ hạn 3 tháng'
+  when frequency <= 180 then N'3. Kỳ hạn 6 tháng'
+  when frequency <= 270 then N'4. Kỳ hạn 9 tháng'
+  when frequency <= 360 then N'5. Kỳ hạn 12 tháng'
+  else N'6. Ngoại lệ' end package_time_range,
+  LAG (CodeNo) over (PARTITION BY customerid ORDER BY fromdate asc) as previous_pawn, 
+Lag(MoneyCurrent) over (PARTITION BY customerid order by fromdate) as balance_of_previous_pawn,
+Lag(LoanMoneyOrg) over (PARTITION BY customerid order by fromdate) as previous_loan_org,
+Lag(InsurranceMoney) over (PARTITION BY customerid order by fromdate) as previous_pawn_insurance,
+Lag(Status) over (PARTITION BY customerid order by fromdate) as previous_pawn_status,
+Lag(ShopCode) over (PARTITION BY customerid order by fromdate) as previous_shop_code,
+case when Lag(PackageCode) over (PARTITION BY customerid order by fromdate) is not null then N'Vay nhanh' else N'Vay thường' end "previous_pawn_package",
+Lag(FromDate) over (PARTITION BY customerid order by fromdate) as pre_pawn_last_open_day,
+Lag(CloseDate) over (PARTITION BY customerid order by fromdate) as pre_pawn_last_close_day
+from  [dwh].[dbo].[Pawn]
+where CategoryCode like '%17%' and 
+ status not in (11, 22, 15)
+and (shopcode not like '%HS%' or shopcode not like '%TEST%')) po 
+left join (select ShopID, Code, Name, case when AreaID = 1 then 'MB' else 'MN' end "area"
+from [dwh].[dbo].[ShopDetail] 
+where AreaID is not null) sd on sd.ShopID = po.ShopID
+left join (select [PAWN_WID],[IMEI],[CUSTOMER_WID],[SHOP_WID],[CREATED_DT] ,[OPEN_DT],[CLOSE_DT],[MESSAGE_NOTIFY]
+from [dwh].[dbo].[W_CHIP_SERIAL_F]) chip_inst on chip_inst.[PAWN_WID] = po.pawnid
+left join W_CUSTOMER_PAPERs kt on kt.pawnid=po.Pawnid
+where po.Created >= dateadd(MONTH, -1, @start_date)
+
+
+
+
