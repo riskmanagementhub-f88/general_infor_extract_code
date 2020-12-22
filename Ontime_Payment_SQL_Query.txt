@@ -1,0 +1,94 @@
+# Code lấy dữ liệu thanh toán đúng hạn DKXM
+
+Declare @schedule_from date ='2020-08-01'
+Declare @schedule_to date ='2020-08-20'
+select *,case when (pmt_stt like N'overdue' and dpd_3_day_after is not null and dpd_3_day_after>0) then N'still_over_due'
+when pmt_stt like N'overdue' and (dpd_3_day_after is null or dpd_3_day_after=0) and three_day_after<getdate() then N'paid_after_3_day'
+when pmt_stt like N'overdue' and three_day_after>=getdate() then N'out_of_range'
+else N'ontime' end as stt_after_3_day,case when PackageCode is null then N'Vay thường' else PackageCode end as package_type
+ from (
+select  pd.pawnid,po.tuoino dpd_yesterday,po2.TuoiNo dpd_3_day_after,pa.PackageCode,pa.shopname,areaid,dbo.getyearmonth(pd.scheduletodate)ym,pd.scheduletodate,dateadd(day,3,pd.ScheduleToDate) three_day_after,pd.principalmoney,pd.acc_sum,pd.paydate,
+pd.acc_prin_payment,paidmoney,pa.status,pa.CodeNo,pa.FromDate,pa.ToDate,pa.closedate,liquid_dt,   
+case  when (pd.paydate<=ScheduleToDate  and acc_prin_payment>=acc_sum) or CloseDate<=ScheduleToDate 
+then N'ontime' else N'overdue' end as pmt_stt 
+from pawnoverduedetail pd  
+left join pawnoverdue po on (po.pawnid=pd.pawnid and po.created=dateadd(day,-1,pd.scheduletodate))
+left join pawnoverdue po2 on (po2.pawnid=pd.pawnid and po2.created=dateadd(day,3,pd.scheduletodate))
+left join  (select pa1.*,shop.name shopname,shop.areaid from Pawn pa1 
+left join ShopDetail shop on pa1.shopcode=shop.code )pa on pa.pawnid=pd.pawnid 
+left join w_pawn_liquid_sale_f li on li.pawn_wid=pd.pawnid  
+ where ((closedate is null and liquid_dt is null) or(ScheduleToDate<=CloseDate) or (scheduletodate<=liquid_dt)) 
+ and pa.STATUS not in (15,11,140) and pa.CategoryCode like N'%17%'
+  and InterestMoney like N'%goc%' and pd.scheduletodate<@schedule_to and pd.scheduletodate>=@schedule_from) tab
+  where dpd_yesterday<=10
+  order by pawnid,scheduletodate
+
+
+
+# Code lấy dữ liệu thanh toán đúng hạn DKOT
+Update @ 21.08.2020 14:43 by Tran Duc Nam
+a, Ontime DKOT trả gốc cuối kỳ
+Declare @schedule_from date ='2020-08-01'
+Declare @schedule_to date ='2020-08-20'
+select *,case when (pmt_stt like N'overdue' and dpd_3_day_after is not null and dpd_3_day_after>0) then N'still_over_due'
+when pmt_stt like N'overdue' and (dpd_3_day_after is null or dpd_3_day_after=0) and three_day_after<getdate() then N'paid_after_3_day'
+when pmt_stt like N'overdue' and three_day_after>=getdate() then N'out_of_range'
+else N'ontime' end as stt_after_3_day,case when PackageCode is null then N'Vay thường' else PackageCode end as package_type
+ from (
+select  ROW_NUMBER() over (partition by pd.pawnid order by moneyinterest) as row_num,pd.pawnid,po.tuoino dpd_yesterday,po2.TuoiNo dpd_3_day_after,pa.PackageCode,pa.shopname,areaid,dbo.getyearmonth(pd.scheduletodate)ym,pd.scheduletodate,dateadd(day,3,pd.ScheduleToDate) three_day_after
+,pd.InterestMoney,pd.MoneyInterest,pd.EarlyCloseFlag,pd.acc_sum,pd.paydate,
+pd.acc_prin_payment,paidmoney,pa.status,pa.CodeNo,pa.FromDate,pa.ToDate,pa.closedate,liquid_dt,   
+case  when (pd.paydate<=ScheduleToDate  and acc_prin_payment>=acc_sum) or CloseDate<=ScheduleToDate 
+then N'ontime' else N'overdue' end as pmt_stt 
+from pawncaroverdue pd  
+left join pawnoverdue po on (po.pawnid=pd.pawnid and po.created=dateadd(day,-1,pd.scheduletodate))
+left join pawnoverdue po2 on (po2.pawnid=pd.pawnid and po2.created=dateadd(day,3,pd.scheduletodate))
+left join  (select pa1.*,shop.name shopname,shop.areaid from Pawn pa1 
+left join ShopDetail shop on pa1.shopcode=shop.code )pa on pa.pawnid=pd.pawnid 
+left join w_pawn_liquid_sale_f li on li.pawn_wid=pd.pawnid  
+ where ((closedate is null and liquid_dt is null) or(ScheduleToDate<=CloseDate) or (scheduletodate<=liquid_dt)) 
+ and pa.STATUS not in (15,11,140) and pa.CategoryCode like N'%15%'
+  and pd.scheduletodate<@schedule_to and pd.scheduletodate>=@schedule_from) tab
+  where dpd_yesterday<=10 and row_num=1
+  order by pawnid,scheduletodate 
+
+ b, Ontime DKOT trả gốc hàng tháng
+Update @ 21.08.2020 13:47 by Tran Duc Nam
+
+Declare @schedule_from date ='2020-08-01'
+Declare @schedule_to date ='2020-08-20'
+select *,case when (pmt_stt like N'overdue' and dpd_3_day_after is not null and dpd_3_day_after>0) then N'still_over_due'
+when pmt_stt like N'overdue' and (dpd_3_day_after is null or dpd_3_day_after=0) and three_day_after<getdate() then N'paid_after_3_day'
+when pmt_stt like N'overdue' and three_day_after>=getdate() then N'out_of_range'
+else N'ontime' end as stt_after_3_day,case when PackageCode is null then N'Vay thường' else PackageCode end as package_type
+ from (
+select  pd.pawnid,po.tuoino dpd_yesterday,po2.TuoiNo dpd_3_day_after,pa.PackageCode,pa.shopname,areaid,dbo.getyearmonth(pd.scheduletodate)ym,pd.scheduletodate,dateadd(day,3,pd.ScheduleToDate) three_day_after,pd.principalmoney,pd.acc_sum,pd.paydate,
+pd.acc_prin_payment,paidmoney,pa.status,pa.CodeNo,pa.FromDate,pa.ToDate,pa.closedate,liquid_dt,   
+case  when (pd.paydate<=ScheduleToDate  and acc_prin_payment>=acc_sum) or CloseDate<=ScheduleToDate 
+then N'ontime' else N'overdue' end as pmt_stt 
+from pawnoverduedetail pd  
+left join pawnoverdue po on (po.pawnid=pd.pawnid and po.created=dateadd(day,-1,pd.scheduletodate))
+left join pawnoverdue po2 on (po2.pawnid=pd.pawnid and po2.created=dateadd(day,3,pd.scheduletodate))
+left join  (select pa1.*,shop.name shopname,shop.areaid from Pawn pa1 
+left join ShopDetail shop on pa1.shopcode=shop.code )pa on pa.pawnid=pd.pawnid 
+left join w_pawn_liquid_sale_f li on li.pawn_wid=pd.pawnid  
+ where ((closedate is null and liquid_dt is null) or(ScheduleToDate<=CloseDate) or (scheduletodate<=liquid_dt)) 
+ and pa.STATUS not in (15,11,140) and pa.CategoryCode like N'%15%'
+  and InterestMoney like N'%goc%' and pd.scheduletodate<@schedule_to and pd.scheduletodate>=@schedule_from) tab
+  where dpd_yesterday<=10
+  order by pawnid,scheduletodate
+
+
+
+
+
+
+
+
+ 
+
+
+ 
+
+
+
