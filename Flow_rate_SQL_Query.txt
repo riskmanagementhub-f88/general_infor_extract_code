@@ -1,0 +1,428 @@
+#1. Đoạn code lấy Data dịch chuyển nhóm nợ quá hạn
+declare @ob_date date='2020-09-30'-- Ngày đâu kỳ
+declare @cb_date date='2020-10-31'-- Ngày cuối kỳ
+
+select * from (
+select tab.*,sum(CurrentMoney) over(partition by shopname,ob_bucket)as ob_bucket_bal,
+count(pawnid) over(partition by shopname,ob_bucket)as ob_bucket_pawn_count, 
+case when cb_bucket>ob_bucket then N'Rolled'
+when cb_bucket=ob_bucket then N'Stuck'
+else N'Cured' end as flow from (
+select @ob_date ob_date,@cb_date cb_date,areaid,ob_po.CategoryName,ob_po.pawnid,ob_po.ContractCode,ob_po.PrincipalPaymentDay,
+ob_po.ChipSerial,FromDate,dwh.dbo.getYearMonth(fromdate)brr_ym,Frequency/30 duration,
+case when ob_po.PaperType like N'KT1' then ob_po.PaperType else N'KT3' end as kt
+,ob_po.CurrentMoney,ob_po.ShopName,ob_po.ShopCode,
+case when ob_po.PackageCode is null then N'Vay thường' else ob_po.PackageCode end as package_type,
+ob_po.TuoiNo ob_dpd,cb_po.TuoiNo cb_dpd,
+case 
+when ob_po.TuoiNo<1 then 0
+when ob_po.TuoiNo<31 and ob_po.TuoiNo>0 then 1
+when ob_po.TuoiNo<61 and ob_po.TuoiNo>30 then 2
+when ob_po.TuoiNo<91 and ob_po.tuoino>60 then 3
+when ob_po.TuoiNo<121 and ob_po.TuoiNo>90 then 4
+when ob_po.TuoiNo<151 and ob_po.TuoiNo>120 then 5
+else 6 end as ob_bucket,
+case 
+when ob_po.TuoiNo<1 then N'0.Trong hạn'
+when ob_po.TuoiNo<31 and ob_po.TuoiNo>0 then N'1.1-30 ngày'
+when ob_po.TuoiNo<61 and ob_po.TuoiNo>30 then N'2.31-60 ngày'
+when ob_po.TuoiNo<91 and ob_po.tuoino>60 then N'3.61-90 ngày'
+when ob_po.TuoiNo<121 and ob_po.TuoiNo>90 then N'4.91-120 ngày'
+when ob_po.TuoiNo<151 and ob_po.TuoiNo>120 then N'5.121-150 ngày'
+else N'6.151++' end as ob_bucket_name,
+case 
+when cb_po.TuoiNo is null then -1
+when cb_po.TuoiNo<1  then 0
+when cb_po.TuoiNo<31 and cb_po.TuoiNo>0 then 1
+when cb_po.TuoiNo<61 and cb_po.TuoiNo>30 then 2
+when cb_po.TuoiNo<91 and cb_po.tuoino>60 then 3
+when cb_po.TuoiNo<121 and cb_po.TuoiNo>90 then 4
+when cb_po.TuoiNo<151 and cb_po.TuoiNo>120 then 5
+else 6 end as cb_bucket,
+case 
+when cb_po.TuoiNo is null then N'-1. Đã đóng'
+when cb_po.TuoiNo<1  then N'0.Trong hạn'
+when cb_po.TuoiNo<31 and cb_po.TuoiNo>0 then N'1.1-30 ngày'
+when cb_po.TuoiNo<61 and cb_po.TuoiNo>30 then N'2.31-60 ngày'
+when cb_po.TuoiNo<91 and cb_po.tuoino>60 then N'3.61-90 ngày'
+when cb_po.TuoiNo<121 and cb_po.TuoiNo>90 then N'4.91-120 ngày'
+when cb_po.TuoiNo<151 and cb_po.TuoiNo>120 then N'5.121-150 ngày'
+else N'6.151++' end as cb_bucket_name
+from dwh.dbo.pawnoverdue ob_po
+ left join (select pawnid,tuoino,created from dwh.dbo.pawnoverdue where created=@cb_date)cb_po
+ on cb_po.pawnid=ob_po.pawnid
+ left join dwh.dbo.shopdetail shop on shop.name=ob_po.shopname
+ where CategoryName like N'%Đăng ký%' and (shopcode not like N'%TEST%' or shopcode not like N'%HS%') and ob_po.created=@ob_date) tab)tab2
+
+
+
+#2. Đoạn code tính flow chi tiết theo hđ ver 2 (thay đổi bucket)
+declare @ob_date date='2020-09-30'-- Ngày đâu kỳ
+declare @cb_date date='2020-10-31'-- Ngày cuối kỳ
+
+select * from (
+select tab.*,sum(CurrentMoney) over(partition by shopname,ob_bucket)as ob_bucket_bal,
+count(pawnid) over(partition by shopname,ob_bucket)as ob_bucket_pawn_count, 
+case when cb_bucket>ob_bucket then N'Rolled'
+when cb_bucket=ob_bucket then N'Stuck'
+else N'Cured' end as flow from (
+select @ob_date ob_date,@cb_date cb_date,areaid,ob_po.CategoryName,ob_po.pawnid,ob_po.ContractCode,ob_po.PrincipalPaymentDay,
+ob_po.ChipSerial,FromDate,dwh.dbo.getYearMonth(fromdate)brr_ym,Frequency/30 duration,
+case when ob_po.PaperType like N'KT1' then ob_po.PaperType else N'KT3' end as kt
+,ob_po.CurrentMoney,ob_po.ShopName,ob_po.ShopCode,
+case when ob_po.PackageCode is null then N'Vay thường' else ob_po.PackageCode end as package_type,
+ob_po.TuoiNo ob_dpd,cb_po.TuoiNo cb_dpd,
+case 
+when ob_po.TuoiNo<1 then 0
+when ob_po.TuoiNo<31 and ob_po.TuoiNo>0 then 1
+when ob_po.TuoiNo<61 and ob_po.TuoiNo>30 then 2
+when ob_po.TuoiNo<91 and ob_po.tuoino>60 then 3
+--when ob_po.TuoiNo<121 and ob_po.TuoiNo>90 then 4
+--when ob_po.TuoiNo<151 and ob_po.TuoiNo>120 then 5
+else 4 end as ob_bucket,
+case 
+when ob_po.TuoiNo<1 then N'0.Trong hạn'
+when ob_po.TuoiNo<31 and ob_po.TuoiNo>0 then N'1.1-30 ngày'
+when ob_po.TuoiNo<61 and ob_po.TuoiNo>30 then N'2.31-60 ngày'
+when ob_po.TuoiNo<91 and ob_po.tuoino>60 then N'3.61-90 ngày'
+--when ob_po.TuoiNo<121 and ob_po.TuoiNo>90 then N'4.91++ ngày'
+--when ob_po.TuoiNo<151 and ob_po.TuoiNo>120 then N'5.121-150 ngày'
+else N'4.91++' end as ob_bucket_name,
+case 
+when cb_po.TuoiNo is null then 0
+when cb_po.TuoiNo<1  then 0
+when cb_po.TuoiNo<31 and cb_po.TuoiNo>0 then 1
+when cb_po.TuoiNo<61 and cb_po.TuoiNo>30 then 2
+when cb_po.TuoiNo<91 and cb_po.tuoino>60 then 3
+--when cb_po.TuoiNo<121 and cb_po.TuoiNo>90 then 4
+--when cb_po.TuoiNo<151 and cb_po.TuoiNo>120 then 5
+else 4 end as cb_bucket,
+case 
+when cb_po.TuoiNo is null then N'0.Trong hạn'
+when cb_po.TuoiNo<1  then N'0.Trong hạn'
+when cb_po.TuoiNo<31 and cb_po.TuoiNo>0 then N'1.1-30 ngày'
+when cb_po.TuoiNo<61 and cb_po.TuoiNo>30 then N'2.31-60 ngày'
+when cb_po.TuoiNo<91 and cb_po.tuoino>60 then N'3.61-90 ngày'
+--when cb_po.TuoiNo<121 and cb_po.TuoiNo>90 then N'4.91-120 ngày'
+--when cb_po.TuoiNo<151 and cb_po.TuoiNo>120 then N'5.121-150 ngày'
+else N'4.91++' end as cb_bucket_name
+from dwh.dbo.pawnoverdue ob_po
+ left join (select pawnid,tuoino,created from dwh.dbo.pawnoverdue where created=@cb_date)cb_po
+ on cb_po.pawnid=ob_po.pawnid
+ left join dwh.dbo.shopdetail shop on shop.name=ob_po.shopname
+ where CategoryName like N'%Đăng ký%' and (shopcode not like N'%TEST%' or shopcode not like N'%HS%') and ob_po.created=@ob_date) tab)tab2
+
+
+
+
+
+
+
+#3. Đoạn Code tính Rolled_rate nhóm nợ trong hạn theo PGD
+declare @ob_date date='2020-06-30'
+declare @cb_date date='2020-07-11'
+
+select ob_date,cb_date,ShopName,ob_bucket,flow,sum(CurrentMoney)balance,max(ob_bucket_bal)bucket_bal,max(ob_bucket_pawn_count)bucket_pawn_count,count(PawnID)pawn_count,
+sum(CurrentMoney)/max(ob_bucket_bal) flow_rate_bal,count(PawnID)/max(ob_bucket_pawn_count) flow_rate_pawn_count
+ from (
+select tab.*,sum(CurrentMoney) over(partition by shopname,ob_bucket)as ob_bucket_bal,
+count(pawnid) over(partition by shopname,ob_bucket)as ob_bucket_pawn_count, 
+case when cb_bucket>ob_bucket then N'Rolled'
+when cb_bucket=ob_bucket then N'Stuck'
+else N'Cured' end as flow from (
+select @ob_date ob_date,@cb_date cb_date,ob_po.pawnid,ob_po.ContractCode,FromDate,dbo.getYearMonth(fromdate)brr_ym,Frequency,
+case when ob_po.PaperType like N'KT1' then ob_po.PaperType else N'KT3' end as kt
+,ob_po.CurrentMoney,ob_po.ShopName,ob_po.ShopCode,
+case when ob_po.PackageCode is null then N'Vay thường' else ob_po.PackageCode end as package_type,
+ob_po.TuoiNo ob_dpd,cb_po.TuoiNo cb_dpd,
+case 
+when ob_po.TuoiNo<1 then 0
+when ob_po.TuoiNo<6 and ob_po.TuoiNo>0 then 1
+when ob_po.TuoiNo<11 and ob_po.TuoiNo>5 then 2
+when ob_po.TuoiNo<31 and ob_po.tuoino>10 then 3
+when ob_po.TuoiNo<61 and ob_po.TuoiNo>30 then 4
+when ob_po.TuoiNo<91 and ob_po.TuoiNo>60 then 5
+else 6 end as ob_bucket,
+case when cb_po.TuoiNo<1 or cb_po.TuoiNo is null then 0
+when cb_po.TuoiNo<6 and cb_po.TuoiNo>0 then 1
+when cb_po.TuoiNo<11 and cb_po.TuoiNo>5 then 2
+when cb_po.TuoiNo<31 and cb_po.tuoino>10 then 3
+when cb_po.TuoiNo<61 and cb_po.TuoiNo>30 then 4
+when cb_po.TuoiNo<91 and cb_po.TuoiNo>60 then 5
+else 6 end as cb_bucket
+ from pawnoverdue ob_po
+ left join (select pawnid,tuoino,created from pawnoverdue where created=@cb_date)cb_po
+ on cb_po.pawnid=ob_po.pawnid
+ where categorycode like N'%17%' and shopcode not like N'%TEST%' and shopcode not like N'%17%' and ob_po.created=@ob_date) tab)tab2
+ where ob_bucket=0 and flow like N'%Rolled%'
+ group by ob_date,cb_date,ShopName,ob_bucket,flow
+ order by flow_rate_bal desc
+
+#3. Code group theo Flow rate của từng Bucket
+
+declare @ob_date date='2020-07-31'-- Ngày đâu kỳ
+declare @cb_date date='2020-08-05'-- Ngày cuối kỳ
+
+select @ob_date from_date,@cb_date to_date,categoryname,flow,ob_bucket_name,max(ob_bucket_bal)/1000000 ob_bal,sum(CurrentMoney)/1000000 transit_bal,sum(CurrentMoney)/max(ob_bucket_bal) flow_rate,max(ob_bucket_pawn_count)ob_pawn,count(PawnID) transit_pawn_count from (
+select tab.*,sum(CurrentMoney) over(partition by categoryname,ob_bucket)as ob_bucket_bal,
+count(pawnid) over(partition by categoryname,ob_bucket)as ob_bucket_pawn_count, 
+case when cb_bucket>ob_bucket then N'Rolled'
+when cb_bucket=ob_bucket then N'Stuck'
+else N'Cured' end as flow from (
+select @ob_date ob_date,@cb_date cb_date,areaid,ob_po.CategoryName,ob_po.pawnid,ob_po.ContractCode,ob_po.PrincipalPaymentDay,
+ob_po.ChipSerial,FromDate,dbo.getYearMonth(fromdate)brr_ym,Frequency/30 duration,
+case when ob_po.PaperType like N'KT1' then ob_po.PaperType else N'KT3' end as kt
+,ob_po.CurrentMoney,ob_po.ShopName,ob_po.ShopCode,
+case when ob_po.PackageCode is null then N'Vay thường' else ob_po.PackageCode end as package_type,
+ob_po.TuoiNo ob_dpd,cb_po.TuoiNo cb_dpd,
+case 
+when ob_po.TuoiNo<1 then 0
+when ob_po.TuoiNo<31 and ob_po.TuoiNo>0 then 1
+when ob_po.TuoiNo<61 and ob_po.TuoiNo>30 then 2
+when ob_po.TuoiNo<91 and ob_po.tuoino>60 then 3
+when ob_po.TuoiNo<121 and ob_po.TuoiNo>90 then 4
+when ob_po.TuoiNo<151 and ob_po.TuoiNo>120 then 5
+else 6 end as ob_bucket,
+case 
+when ob_po.TuoiNo<1 then N'0.Trong hạn'
+when ob_po.TuoiNo<31 and ob_po.TuoiNo>0 then N'1.1-30 ngày'
+when ob_po.TuoiNo<61 and ob_po.TuoiNo>30 then N'2.31-60 ngày'
+when ob_po.TuoiNo<91 and ob_po.tuoino>60 then N'3.61-90 ngày'
+when ob_po.TuoiNo<121 and ob_po.TuoiNo>90 then N'4.91-120 ngày'
+when ob_po.TuoiNo<151 and ob_po.TuoiNo>120 then N'5.121-150 ngày'
+else N'6.151++' end as ob_bucket_name,
+case 
+when cb_po.TuoiNo is null then -1
+when cb_po.TuoiNo<1  then 0
+when cb_po.TuoiNo<31 and cb_po.TuoiNo>0 then 1
+when cb_po.TuoiNo<61 and cb_po.TuoiNo>30 then 2
+when cb_po.TuoiNo<91 and cb_po.tuoino>60 then 3
+when cb_po.TuoiNo<121 and cb_po.TuoiNo>90 then 4
+when cb_po.TuoiNo<151 and cb_po.TuoiNo>120 then 5
+else 6 end as cb_bucket,
+case 
+when cb_po.TuoiNo is null then N'-1. Đã đóng'
+when cb_po.TuoiNo<1  then N'0.Trong hạn'
+when cb_po.TuoiNo<31 and cb_po.TuoiNo>0 then N'1.1-30 ngày'
+when cb_po.TuoiNo<61 and cb_po.TuoiNo>30 then N'2.31-60 ngày'
+when cb_po.TuoiNo<91 and cb_po.tuoino>60 then N'3.61-90 ngày'
+when cb_po.TuoiNo<121 and cb_po.TuoiNo>90 then N'4.91-120 ngày'
+when cb_po.TuoiNo<151 and cb_po.TuoiNo>120 then N'5.121-150 ngày'
+else N'6.151++' end as cb_bucket_name
+
+ from pawnoverdue ob_po
+ left join (select pawnid,tuoino,created from pawnoverdue where created=@cb_date)cb_po
+ on cb_po.pawnid=ob_po.pawnid
+ left join ShopDetail shop on shop.name=ob_po.shopname
+ where CategoryName like N'%Đăng ký%' and (shopcode not like N'%TEST%' or shopcode not like N'%HS%') 
+ and ob_po.created=@ob_date) tab) tab2
+ group by categoryname,flow,ob_bucket_name
+ order by CategoryName,ob_bucket_name
+
+#4. Đoạn code lấy cmt cuối cùng của các HĐ rolled
+Update @27.08.2020 11:03 by Tran Duc Nam
+declare @ob_date date='2020-07-31'-- Ngày đâu kỳ
+declare @cb_date date='2020-08-26'-- Ngày cuối kỳ
+
+select tab2.*,cmt.date_diff xln_day_not_cmt,cmt_shop.date_diff shop_day_not_cmt,
+tab2.cb_dpd-cmt.date_diff dpd_xln_stop_cmt,tab2.cb_dpd-cmt_shop.date_diff dpd_shop_stop_cmt,
+case when tab2.cb_dpd-cmt.date_diff<=0 or cmt.date_diff is null  then N'xln_not_cmt_when_dpd_less_than_0'
+when tab2.cb_dpd-cmt.date_diff<=5 then N'xln_not_cmt_when_dpd_1to5'
+when tab2.cb_dpd-cmt.date_diff<=10 then N'xln_not_cmt_when_dpd_1to10'
+when tab2.cb_dpd-cmt.date_diff<=30 then N'xln_not_cmt_when_dpd_11to30'
+else N'xln_not_cmt_when_dpd_above_30' end as xln_cmt_stt,
+case when tab2.cb_dpd-cmt_shop.date_diff<=0  or cmt_shop.date_diff is null then N'shop_not_cmt_when_dpd_less_than_0'
+when tab2.cb_dpd-cmt_shop.date_diff<=5 then N'shop_not_cmt_when_dpd_1to5'
+when tab2.cb_dpd-cmt_shop.date_diff<=10 then N'shop_not_cmt_when_dpd_1to10'
+when tab2.cb_dpd-cmt_shop.date_diff<=30 then N'shop_not_cmt_when_dpd_11to30'
+else N'shop_not_cmt_when_dpd_above_30' end as shop_cmt_stt,
+
+cmt.Body xln_last_cmt,cmt.CommentType xln_last_cmt_type,cmt.CreatedDate xln_last_cmt_dt,cmt.CreatedDate xln_last_cmt_date,
+cmt_shop.Body shop_last_cmt,cmt_shop.CommentType shop_last_cmt_type, cmt_shop.CreatedDate shop_last_cmt_dt, cmt_shop.cmtdate shop_last_cmt_date
+ from (
+select tab.*,sum(CurrentMoney) over(partition by shopname,ob_bucket)as ob_bucket_bal,
+count(pawnid) over(partition by shopname,ob_bucket)as ob_bucket_pawn_count, 
+case when cb_bucket>ob_bucket then N'Rolled'
+when cb_bucket=ob_bucket then N'Stuck'
+else N'Cured' end as flow from (
+select @ob_date ob_date,@cb_date cb_date,areaid,ob_po.CategoryName,ob_po.pawnid,ob_po.ContractCode,ob_po.PrincipalPaymentDay,
+ob_po.ChipSerial,FromDate,dbo.getYearMonth(fromdate)brr_ym,Frequency/30 duration,
+case when ob_po.PaperType like N'KT1' then ob_po.PaperType else N'KT3' end as kt
+,ob_po.CurrentMoney,ob_po.ShopName,ob_po.ShopCode,
+case when ob_po.PackageCode is null then N'Vay thường' else ob_po.PackageCode end as package_type,
+ob_po.TuoiNo ob_dpd,cb_po.TuoiNo cb_dpd,
+case 
+when ob_po.TuoiNo<1 then 0
+when ob_po.TuoiNo<31 and ob_po.TuoiNo>0 then 1
+when ob_po.TuoiNo<61 and ob_po.TuoiNo>30 then 2
+when ob_po.TuoiNo<91 and ob_po.tuoino>60 then 3
+when ob_po.TuoiNo<121 and ob_po.TuoiNo>90 then 4
+when ob_po.TuoiNo<151 and ob_po.TuoiNo>120 then 5
+else 6 end as ob_bucket,
+case 
+when ob_po.TuoiNo<1 then N'0.Trong hạn'
+when ob_po.TuoiNo<31 and ob_po.TuoiNo>0 then N'1.1-30 ngày'
+when ob_po.TuoiNo<61 and ob_po.TuoiNo>30 then N'2.31-60 ngày'
+when ob_po.TuoiNo<91 and ob_po.tuoino>60 then N'3.61-90 ngày'
+when ob_po.TuoiNo<121 and ob_po.TuoiNo>90 then N'4.91-120 ngày'
+when ob_po.TuoiNo<151 and ob_po.TuoiNo>120 then N'5.121-150 ngày'
+else N'6.151++' end as ob_bucket_name,
+case 
+when cb_po.TuoiNo is null then -1
+when cb_po.TuoiNo<1  then 0
+when cb_po.TuoiNo<31 and cb_po.TuoiNo>0 then 1
+when cb_po.TuoiNo<61 and cb_po.TuoiNo>30 then 2
+when cb_po.TuoiNo<91 and cb_po.tuoino>60 then 3
+when cb_po.TuoiNo<121 and cb_po.TuoiNo>90 then 4
+when cb_po.TuoiNo<151 and cb_po.TuoiNo>120 then 5
+else 6 end as cb_bucket,
+case 
+when cb_po.TuoiNo is null then N'-1. Đã đóng'
+when cb_po.TuoiNo<1  then N'0.Trong hạn'
+when cb_po.TuoiNo<31 and cb_po.TuoiNo>0 then N'1.1-30 ngày'
+when cb_po.TuoiNo<61 and cb_po.TuoiNo>30 then N'2.31-60 ngày'
+when cb_po.TuoiNo<91 and cb_po.tuoino>60 then N'3.61-90 ngày'
+when cb_po.TuoiNo<121 and cb_po.TuoiNo>90 then N'4.91-120 ngày'
+when cb_po.TuoiNo<151 and cb_po.TuoiNo>120 then N'5.121-150 ngày'
+else N'6.151++' end as cb_bucket_name
+
+ from pawnoverdue ob_po
+ left join (select pawnid,tuoino,created from pawnoverdue where created=@cb_date)cb_po
+ on cb_po.pawnid=ob_po.pawnid
+ left join ShopDetail shop on shop.name=ob_po.shopname
+ where CategoryName like N'%Đăng ký%' and (shopcode not like N'%TEST%' or shopcode not like N'%HS%')
+  and ob_po.created=@ob_date) tab)tab2
+ 
+left join (select *,DATEDIFF(day,cmtdate,@cb_date) date_diff from (
+select *,row_number()
+ over (partition by pawnid  order by cmtdate desc 
+	 ) row_id  from CommentContract  where [Nhóm] like N'%xấu%') cmt_1 where row_id=1
+) cmt on cmt.pawnid=tab2.pawnid
+left join (select *,DATEDIFF(day,cmtdate,@cb_date) date_diff from (
+select *,row_number()
+ over (partition by pawnid  order by cmtdate desc 
+	 ) row_id  from CommentContract  where [PGD] is not null) cmt_2 where row_id=1
+) cmt_shop on cmt_shop.pawnid=tab2.pawnid
+
+ where flow like N'Rolled' and ob_bucket=0
+
+
+
+
+
+
+
+
+
+#5.Code tính rolled B3 theo kt
+
+declare @ob_date date='2020-06-30'-- Ngày đâu kỳ
+declare @cb_date date='2020-07-26'-- Ngày cuối kỳ
+
+select ob_date,cb_date,CategoryName,kt,ob_bucket,flow,sum(CurrentMoney) balance,count(pawnid)p_count from (
+select tab.*, 
+case when cb_bucket>ob_bucket then N'Rolled'
+when cb_bucket=ob_bucket then N'Stuck'
+else N'Cured' end as flow from (
+select @ob_date ob_date,@cb_date cb_date,areaid,ob_po.CategoryName,ob_po.pawnid,ob_po.ContractCode,ob_po.PrincipalPaymentDay,
+ob_po.ChipSerial,FromDate,Frequency/30 duration,
+case when ob_po.PaperType like N'KT1' then ob_po.PaperType else N'KT3' end as kt
+,ob_po.CurrentMoney,ob_po.ShopName,ob_po.ShopCode,
+case when ob_po.PackageCode is null then N'Vay thường' else ob_po.PackageCode end as package_type,
+ob_po.TuoiNo ob_dpd,cb_po.TuoiNo cb_dpd,
+case 
+when ob_po.TuoiNo<1 then 0
+when ob_po.TuoiNo<31 and ob_po.TuoiNo>0 then 1
+when ob_po.TuoiNo<61 and ob_po.TuoiNo>30 then 2
+when ob_po.TuoiNo<91 and ob_po.tuoino>60 then 3
+else 4 end as ob_bucket,
+case 
+when ob_po.TuoiNo<1 then N'0.Trong hạn'
+when ob_po.TuoiNo<31 and ob_po.TuoiNo>0 then N'1.1-30 ngày'
+when ob_po.TuoiNo<61 and ob_po.TuoiNo>30 then N'2.31-60 ngày'
+when ob_po.TuoiNo<91 and ob_po.tuoino>60 then N'3.61-90 ngày'
+else N'4.91++' end as ob_bucket_name,
+case 
+when cb_po.TuoiNo is null then 0
+when cb_po.TuoiNo<1  then 0
+when cb_po.TuoiNo<31 and cb_po.TuoiNo>0 then 1
+when cb_po.TuoiNo<61 and cb_po.TuoiNo>30 then 2
+when cb_po.TuoiNo<91 and cb_po.tuoino>60 then 3
+else 4 end as cb_bucket,
+case 
+when cb_po.TuoiNo is null then N'0.Trong hạn'
+when cb_po.TuoiNo<1  then N'0.Trong hạn'
+when cb_po.TuoiNo<31 and cb_po.TuoiNo>0 then N'1.1-30 ngày'
+when cb_po.TuoiNo<61 and cb_po.TuoiNo>30 then N'2.31-60 ngày'
+when cb_po.TuoiNo<91 and cb_po.tuoino>60 then N'3.61-90 ngày'
+else N'4.91++' end as cb_bucket_name
+from dwh.dbo.pawnoverdue ob_po
+ left join (select pawnid,tuoino,created from dwh.dbo.pawnoverdue where created=@cb_date)cb_po
+ on cb_po.pawnid=ob_po.pawnid
+ left join dwh.dbo.shopdetail shop on shop.name=ob_po.shopname
+ where CategoryName like N'%Đăng ký%' and 
+ (shopcode not like N'%TEST%' or shopcode not like N'%HS%')
+  and ob_po.created=@ob_date) tab)tab2
+  where ob_bucket=3
+  group by ob_date,cb_date,CategoryName,kt,ob_bucket,flow
+
+
+#6. Tính Rolled B3 theo KT (các tháng 5 trở về trước)
+declare @ob_date date='2020-05-31'-- Ngày đâu kỳ
+declare @cb_date date='2020-06-26'-- Ngày cuối kỳ
+
+select ob_date,cb_date,CategoryName,kt,ob_bucket,flow,sum(CurrentMoney) balance,count(pawnid)p_count from (
+select tab.*, 
+case when cb_bucket>ob_bucket then N'Rolled'
+when cb_bucket=ob_bucket then N'Stuck'
+else N'Cured' end as flow from (
+select @ob_date ob_date,@cb_date cb_date,ob_po.CategoryName,ob_po.pawnid,ob_po.ContractCode,ob_po.PrincipalPaymentDay,
+ob_po.ChipSerial,FromDate,Frequency/30 duration,
+case when pp.PaperType like N'KT1' then pp.PaperType else N'KT3' end as kt
+,ob_po.CurrentMoney,ob_po.ShopName,ob_po.ShopCode,
+case when ob_po.PackageCode is null then N'Vay thường' else ob_po.PackageCode end as package_type,
+ob_po.TuoiNo ob_dpd,cb_po.TuoiNo cb_dpd,
+case 
+when ob_po.TuoiNo<1 then 0
+when ob_po.TuoiNo<31 and ob_po.TuoiNo>0 then 1
+when ob_po.TuoiNo<61 and ob_po.TuoiNo>30 then 2
+when ob_po.TuoiNo<91 and ob_po.tuoino>60 then 3
+else 4 end as ob_bucket,
+case 
+when ob_po.TuoiNo<1 then N'0.Trong hạn'
+when ob_po.TuoiNo<31 and ob_po.TuoiNo>0 then N'1.1-30 ngày'
+when ob_po.TuoiNo<61 and ob_po.TuoiNo>30 then N'2.31-60 ngày'
+when ob_po.TuoiNo<91 and ob_po.tuoino>60 then N'3.61-90 ngày'
+else N'4.91++' end as ob_bucket_name,
+case 
+when cb_po.TuoiNo is null then 0
+when cb_po.TuoiNo<1  then 0
+when cb_po.TuoiNo<31 and cb_po.TuoiNo>0 then 1
+when cb_po.TuoiNo<61 and cb_po.TuoiNo>30 then 2
+when cb_po.TuoiNo<91 and cb_po.tuoino>60 then 3
+else 4 end as cb_bucket,
+case 
+when cb_po.TuoiNo is null then N'0.Trong hạn'
+when cb_po.TuoiNo<1  then N'0.Trong hạn'
+when cb_po.TuoiNo<31 and cb_po.TuoiNo>0 then N'1.1-30 ngày'
+when cb_po.TuoiNo<61 and cb_po.TuoiNo>30 then N'2.31-60 ngày'
+when cb_po.TuoiNo<91 and cb_po.tuoino>60 then N'3.61-90 ngày'
+else N'4.91++' end as cb_bucket_name
+from dwh.dbo.pawnoverdue ob_po
+ left join (select pawnid,tuoino,created from dwh.dbo.pawnoverdue where created=@cb_date)cb_po
+ on cb_po.pawnid=ob_po.pawnid
+ left join dwh.dbo.W_CUSTOMER_PAPERs pp on pp.PawnID=ob_po.PawnID
+ where CategoryName like N'%Đăng ký%' and 
+ (shopcode not like N'%TEST%' or shopcode not like N'%HS%')
+  and ob_po.created=@ob_date) tab)tab2
+  where ob_bucket=3
+  group by ob_date,cb_date,CategoryName,kt,ob_bucket,flow
+
+
+
+
+
+
+
+
+
