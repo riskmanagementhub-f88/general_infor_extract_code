@@ -1,0 +1,82 @@
+#1.  Code lấy cảnh báo cuối cùng của HĐ  trong tháng latest
+Update @ 26.08.2020 14:16 by  Tran Duc Nam
+Declare @warn_from date='2020-08-01'
+Declare @warn_to date ='2020-08-25'
+select * from (
+select *,row_number()
+ over (partition by codeno  order by warningcreated desc 
+	 ) row_id 
+from vw_W_REPORT_WARNING_GPS_F ) tab
+where warningcreated>=@warn_from and warningcreated<=@warn_to and row_id=1
+
+#2. Code lấy thống kê HĐ lắp Chip+ cảnh báo cuối cùng+ cảnh báo đầu tiên dựa theo Dư nợ
+Update @ 26.08 14:38 by Tran Duc Nam
+Declare @ext_date date='2020-08-24'
+select po.CREATED,po.PawnID,ContractCode,CategoryName,po.ShopName,ShopCode,CurrentMoney,po.FromDate,ToDate,dbo.getyearmonth(po.fromdate) brr_ym,
+po.ChipSerial pos_seri,chip.IMEI sys_chip_seri,case when po.ChipSerial<>chip.IMEI then N'diff_seri' else N'same_seri' end as check_seri_pos_database,
+case when po.FromDate>'2020-06-10' then N'brr_from_11.06' else N'brr_before_11.06' end as brr_tick,
+case when chip.IMEI is not null then N'install_chip' else N'not_chip' end as have_chip,chip.DEVICE_STATUS,chip.MESSAGE_NOTIFY,chip.NOTIFY_DT,
+tuoino,case when po.packagecode is null then N'Vay thường' else packagecode end as package_type,
+case when TuoiNo<1 then N'1.Trong hạn'
+when TuoiNo<31 then N'2.1-30'
+when TuoiNo<61 then N'3.31-60'
+when TuoiNo<91 then N'4.61-90'
+when TuoiNo<121 then N'5.91-120'
+else N'6.>120' end as bucket,PackageCode,chip_warning.WarningCreated last_warning_date,dbo.getyearmonth(chip_warning.WarningCreated) last_warning_ym,
+chip_warning.WarningNumber,chip_warning.NumberDay,chip_warning.WarningContent,chip_warning.CommentContent,chip_warning.ProcessStatus,
+chip_warning.Distance,chip_warning.DPD dpd_at_last_warning,
+chip_warning_2.WarningCreated first_warning_date,dbo.getYearMonth(chip_warning_2.warningcreated)first_warning_ym,
+chip_warning_2.DPD dpd_at_first_warning,chip_warning_2.NumberDay first_warning_numberday,chip_warning_2.CommentContent first_warning_cmt,
+case when chip_warning_2.CommentCat is null or chip_warning_2.CommentCat like N'' then N'no_response' else N'responsed' end as first_warning_response,
+chip_warning_2.WarningContent first_warning_des,
+case when chip_warning.CommentCat like N'' or chip_warning.CommentCat is null then N'no_response' else N'responsed' end as shop_response_warning,
+shop.areaid from pawnoverdue po
+left join ShopDetail shop on shop.name=po.ShopName
+left join  (select * from (select *,row_number()
+ over (partition by codeno  order by warningcreated desc 
+	 ) row_id 
+from vw_W_REPORT_WARNING_GPS_F ) tab where row_id=1) chip_warning
+on chip_warning.codeno=po.ContractCode
+left join  (select * from (select *,row_number()
+ over (partition by codeno  order by warningcreated asc 
+	 ) row_id 
+from vw_W_REPORT_WARNING_GPS_F ) tab where row_id=1) chip_warning_2
+on chip_warning_2.codeno=po.ContractCode
+left join (select * from
+( select *, ROW_NUMBER()
+over (partition by pawn_wid order by created_dt desc) row_id
+ from W_CHIP_SERIAL_F  ) tab where row_id=1 )
+ chip on chip.PAWN_WID=po.PawnID
+where po.CategoryName like N'%Đăng ký%'
+and po.CREATED=@ext_date
+
+
+ #4. Code gộp cmt của 1 cảnh báo vào chung 1 dòng
+Update @22.08 12:19 By Tran Duc Nam
+ SELECT  a.PAWN_WID,a.OPEN_DT,a.COMMNET_TITLE,a.CONTRACT_NO,a.IMEI,a.DISTANCE,a.WARNING_TITLE,a.NUMBER_DAY,cmt_history
+FROM    W_CHIP_SERIAL_WARNING_F a
+CROSS APPLY --or OUTER APPLY
+(
+    SELECT SUBSTRING(
+        (SELECT ';'+b.COMMENT_DESCRIPTION
+        FROM    W_CHIP_SERIAL_WARNING_F b
+        WHERE   a.PAWN_WID = b.PAWN_WID and a.OPEN_DT=b.OPEN_DT
+		order by b.COMMENT_DT
+        FOR XML PATH(''))
+        ,2
+        ,4000) cmt_history
+) x
+where a.PAWN_WID=1412652
+group by a.PAWN_WID,a.OPEN_DT,a.COMMNET_TITLE,a.CONTRACT_NO,a.IMEI,a.DISTANCE,a.WARNING_TITLE,a.NUMBER_DAY,cmt_history
+
+
+
+
+
+
+
+
+
+
+
+
