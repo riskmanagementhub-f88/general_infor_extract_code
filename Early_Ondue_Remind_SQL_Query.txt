@@ -1,0 +1,88 @@
+# Code nhắc nợ DKXM
+
+Declare @schedule_from date ='"""+fromdate+"""'
+                Declare @schedule_to date ='"""+todate+"""'
+select tab.*,cmt.*,DATEDIFF(day,cmtdate,ScheduleToDate) day_cmt_before_schedule,
+  case when cmtdate is null then N'1.no_cmt'
+  when DATEDIFF(day,cmtdate,ScheduleToDate)=0 then N'3.on_due_date'
+   when DATEDIFF(day,cmtdate,ScheduleToDate)<>0 then N'2.early_remind' end as cmt_type,
+ case when PackageCode like '%NHANH%' then N'Vay nhanh' else N'Vay thường' end as package_type
+ from ( select  pd.pawnid,po.tuoino dpd_yesterday,
+ pa.PackageCode,pa.shopname, pa.shopcode,
+ areaid,pd.scheduletodate,pd.principalmoney,pd.acc_sum,pd.paydate, pd.acc_prin_payment,paidmoney,
+ pa.status,pa.FromDate,pa.ToDate,pa.closedate,liquid_dt,   
+  case  when (pd.paydate<=ScheduleToDate  and acc_prin_payment>=acc_sum) or CloseDate<=ScheduleToDate 
+   then N'ontime' else N'overdue' end as pmt_stt  from pawnoverduedetail pd 
+   left join pawnoverdue po on (po.pawnid=pd.pawnid and po.created=dateadd(day,-1,pd.scheduletodate))  
+   left join  (select pa1.*,shop.name shopname,shop.areaid from Pawn pa1 
+   left join ShopDetail shop on pa1.shopcode=shop.code )pa on pa.pawnid=pd.pawnid  
+   left join w_pawn_liquid_sale_f li on li.pawn_wid=pd.pawnid   
+where ((closedate is null and liquid_dt is null) or(ScheduleToDate<=CloseDate) or (scheduletodate<=liquid_dt))  
+and pa.STATUS not in (15,11,140) and pa.CategoryCode like N'%17%' and InterestMoney like N'%goc%' 
+and pd.scheduletodate<=@schedule_to and pd.scheduletodate>=@schedule_from) tab
+  left join (select pawnid pawn_wid,CodeNo,Body,
+  case when [CommentType] = 1 then 'KH KNM'
+        when [CommentType] = 2 then N'SĐT Không ll được'
+        when [CommentType] = 3 then N'KH hẹn chuyển khoản'
+        when [CommentType] = 4 then N'KH hẹn thanh toán'
+        when [CommentType] = 5 then N'Người nghe báo sai số'
+        when [CommentType] = 6 then N'Kh chặn số'
+        when [CommentType] = 7 then N'KH báo thanh lý'
+        when [CommentType] = 9 then N'Khác'
+        when [CommentType] = 8 then 'Admin'
+        else N'Khác' end CommentType,cmtdate,CreatedDate cmt_dt from CommentContract 
+  where PGD is not null and cmtdate>= dateadd(day,-6,@schedule_from) and cmtdate<=@schedule_to)cmt 
+  on cmt.pawn_wid=tab.pawnid and cmt.cmtdate>= dateadd(day,-6,tab.scheduletodate) and cmt.cmtdate<= tab.ScheduleToDate
+ where dpd_yesterday<=5
+
+# Code nhắc nợ DKOT
+
+Declare @schedule_from date ='"""+fromdate+"""'
+                Declare @schedule_to date ='"""+todate+"""'
+                select  tab.*,cmt.*,
+DATEDIFF(day,cmt.cmtdate,ScheduleToDate) day_cmt_before_schedule,
+case when cmtdate is null then N'1.no_cmt'
+when DATEDIFF(day,cmt.cmtdate,ScheduleToDate)=0 then N'3.on_due_date'
+when DATEDIFF(day,cmt.cmtdate,ScheduleToDate)<>0 then N'2.early_remind' end as cmt_type,
+case when PackageCode like '%NHANH%' then N'Vay nhanh' else N'Vay thường' end as package_type
+from ( select  pd.pawnid,po.tuoino dpd_yesterday,
+pa.PackageCode,pa.shopname, pa.shopcode,
+areaid,pd.scheduletodate,pd.paydate, pd.acc_prin_payment,
+pa.status,pa.FromDate,pa.ToDate,pa.closedate,liquid_dt,   
+case  when (pd.paydate<=ScheduleToDate  and acc_prin_payment>=acc_sum) or CloseDate<=ScheduleToDate 
+then N'ontime' else N'overdue' end as pmt_stt, pd.type_cartitle
+from (select 'monthly_paid_origin' type_cartitle, podd.[PawnID],podd.[ScheduleToDate] ,podd.[ScheduleFromDate]
+      ,podd.[acc_prin_payment],podd.[paydate] ,podd.[InterestMoney], podd.acc_sum from [dwh].[dbo].[PawnOverDuedetail] podd
+	  left join pawn pa on pa.pawnid = podd.pawnid
+	  where InterestMoney like N'%goc%' and podd.scheduletodate<=@schedule_to and podd.scheduletodate>=@schedule_from
+	  and pa.categorycode like '%15%'
+	  union all
+	  (select 'eop_paid_origin' type_cartitle, [PawnID]
+      ,[ScheduleToDate]
+      ,[ScheduleFromDate]
+      ,[acc_prin_payment]
+      ,[paydate]
+      ,[MoneyInterest] as [InterestMoney],
+	  acc_sum
+  FROM [dwh].[dbo].[pawnCarOverDue]
+  where [MoneyInterest] like '%lai%' and scheduletodate<=@schedule_to and scheduletodate>=@schedule_from)) pd 
+   left join pawnoverdue po on (po.pawnid=pd.pawnid and po.created=dateadd(day,-1,pd.scheduletodate))  
+   left join  (select pa1.*,shop.name shopname,shop.areaid from Pawn pa1 
+   left join ShopDetail shop on pa1.shopcode=shop.code )pa on pa.pawnid=pd.pawnid  
+   left join w_pawn_liquid_sale_f li on li.pawn_wid=pd.pawnid   
+where ((closedate is null and liquid_dt is null) or(ScheduleToDate<=CloseDate) or (scheduletodate<=liquid_dt))  
+and pa.STATUS not in (15,11,140) ) tab
+  left join (select pawnid pawn_wid,CodeNo,Body,case when [CommentType] = 1 then 'KH KNM'
+        when [CommentType] = 2 then N'SĐT Không ll được'
+        when [CommentType] = 3 then N'KH hẹn chuyển khoản'
+        when [CommentType] = 4 then N'KH hẹn thanh toán'
+        when [CommentType] = 5 then N'Người nghe báo sai số'
+        when [CommentType] = 6 then N'Kh chặn số'
+        when [CommentType] = 7 then N'KH báo thanh lý'
+        when [CommentType] = 9 then N'Khác'
+        when [CommentType] = 8 then 'Admin'
+        else N'Khác' end  CommentType,cmtdate,CreatedDate cmt_dt from CommentContract 
+  where PGD is not null and cmtdate>= dateadd(day,-6,@schedule_from) and cmtdate<=@schedule_to)cmt 
+  on cmt.pawn_wid=tab.pawnid and cmt.cmtdate>= dateadd(day,-6,tab.scheduletodate) and cmt.cmtdate<= tab.ScheduleToDate
+ where dpd_yesterday<=5 
+ order by tab.PawnID
