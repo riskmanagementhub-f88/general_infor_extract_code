@@ -1,0 +1,196 @@
+# Import dictionary
+import pandas as pd
+import pypyodbc as py
+import xlsxwriter
+import gspread
+import gspread_dataframe as gd
+from gspread_dataframe import get_as_dataframe, set_with_dataframe
+from oauth2client.service_account import ServiceAccountCredentials # Đọc dữ liệu từ googlesheets
+from df2gspread import df2gspread as d2g # Ghi dữ liệu lên googlesheets
+from pprint import pprint
+from googleapiclient import discovery
+import pypyodbc #connect với sql server
+import numpy as np #Tính toán 😊,-,*,/)
+import sqlalchemy #query trực tiếp
+import urllib #connect url
+import time #
+import datetime as dt
+from datetime import timedelta, datetime
+import pymssql
+import calendar
+from google.oauth2 import service_account
+import pygsheets
+
+import json
+
+# Connect to DB
+db = py.connect("Driver={ODBC Driver 17 for SQL Server};"
+                        "Server=103.69.193.246;"
+                        "Database=dwh;"
+                
+                        "uid=dwh_qtrr;pwd=DWH@qtrr")
+print('Connected to SQL server: DWH')
+
+with open(r'D:\F88\Python code\Immediate_warning\service_account.json') as source:
+    info = json.load(source)
+credentials = service_account.Credentials.from_service_account_info(info)
+
+gc = pygsheets.authorize(service_account_file=r'D:\F88\Python code\Immediate_warning\service_account.json')
+
+# scope = ["https://spreadsheets.google.com/feeds",'https://www.googleapis.com/auth/spreadsheets',"https://www.googleapis.com/auth/drive.file","https://www.googleapis.com/auth/drive"]
+# credentials = ServiceAccountCredentials.from_json_keyfile_name(r'C:\Users\KSNB_NamTD\jupyter-googlesheets\service_account.json', scope)
+# gc = gspread.authorize(credentials)
+
+# Lấy ID write-off wb
+write_off_id='15r30_u_xE0iUexkUgsbZqcZTy0htmSflCp-uty_1hWA'
+write_off_wb=gc.open_by_key(write_off_id)
+# Lấy ID shopdetail
+shop_detail_id='1ZTQE_pfBCAUr-0GSMPJBqtCyZVxX4hdiPuT_RDrdjeQ'
+shop_detail_wb=gc.open_by_key(shop_detail_id)
+# Lấy ID overdue checking
+overdue_id='15oZa5BgMK3yQ33FYIh7XYkm1_g1KXQIGJY_fcmFCVog'
+overdue_wb=gc.open_by_key(overdue_id)
+# Lấy ID quick note
+qnote_id='10aRq1BdMxagy3cwBKdB4ACSwhnXQd0sUElkfPOniYaM'
+qnote_wb=gc.open_by_key(qnote_id)
+
+
+def to_df(wb_name,sheet_name):
+    return wb_name.worksheet_by_title(sheet_name).get_as_df()   
+#Function chuyển sheet thành Data Frame
+def to_dataframe(wb_name,sheet_name,data_row,col):
+    a=wb_name.worksheet(sheet_name).get_all_values()
+    return pd.DataFrame(data=a[data_row:],columns=a[col])
+
+#Funtion update data vào sheet wb_name:tên wb,target_sheet: tên sheet cần update; data:dữ liệu muốn update
+def update_data(wb_name,target_sheet,data):
+    existing =to_dataframe(wb_name,target_sheet,1,0)
+    updated = existing.append(data)
+    gd.set_with_dataframe(wb_name.worksheet(target_sheet),updated)
+
+# Function ghi đè dữ liệu lên gg sheet
+def write_data(wb_name,ws_name,ws_range,data):
+    wb_name.values_clear(ws_range)
+    sheet=wb_name.worksheet(ws_name)
+    set_with_dataframe(sheet,data)
+    print('Đã ghi dữ liệu lên sheet '+ ws_name)
+
+write_off=to_df(write_off_wb,'list')
+write_off['code']=write_off.codeno.apply(lambda x: x[5:])
+
+
+shop_id='1OCzHxTE7Er8_W1-IT92rTOCISAlufFOjcwtw2eIX0tU'
+shop_wb=gc.open_by_key(shop_id)
+shop_detail_da=shop_wb.worksheet_by_title('Everything').get_as_df()
+shop_data=shop_detail_da[['Mã PGD','Vùng/Miền','Tuổi','Nhóm','Tháng KT','Năm KT','Vùng', 'Phường/Xã', 'Quận/Huyện','Tỉnh/TP', 'Vĩ độ', 'Kinh độ']]
+
+shop_str="""select name shopname,areaid,code shopcode,opendate,DATEDIFF(month,opendate,getdate()) shopage,
+case when DATEDIFF(month,opendate,getdate())<7 then N'1.0-6 tháng'
+when DATEDIFF(month,opendate,getdate())<13 then N'2.7-12 tháng' 
+when DATEDIFF(month,opendate,getdate())<19 then N'3. 13-18 tháng'
+when DATEDIFF(month,opendate,getdate())<25 then N'4. 19-24 tháng'
+else N'5.>24 tháng' end as shopage_group
+ from shopdetail
+ where opendate is not null"""
+shop_detail=pd.read_sql_query(shop_str,db)
+
+# Đọc data dpd
+def read_balance_data(ext_date,cate):
+    po_motor_str=""" Declare @check_date date ='"""+ext_date+"""'
+    select po.created,pawnid,categoryname,po.status,rate,contractcode,po.papertype,fromdate,
+    frequency/30 duration,
+    FORMAT(fromdate,'yyyyMM') brr_ym, 
+    case when packagecode is null then N'Vay thường' else packagecode end as package_type, 
+    case when areaid=1 then N'Miền Bắc' else N'Miền Nam' end as region,shopcode,shopname,
+    datediff(day,shop.OpenDate,FromDate)/30 shop_age,userfullname,currentmoney/1000000 currentmoney,yearmonth,tuoino,tuoino_adjust_, 
+    case when TuoiNo<1 then 0  when TuoiNo<31 and Tuoino>0 then 1  when TuoiNo<61 and Tuoino>30 then 2 when TuoiNo<91 and tuoino>60 then 3  when tuoino>90 then 4 end as bucket_id,
+    case when TuoiNo<1 then N'0.Trong hạn' when TuoiNo<11 and Tuoino>0 then N'1.1-10 ngày' when TuoiNo<31 and Tuoino>10 then N'2.11-30 ngày'  when TuoiNo<61 and tuoino>30 then N'3.31-60 ngày' when TuoiNo<91 and tuoino>60 then N'4.61-90 ngày' when TuoiNo<121 and tuoino>90 then N'5.91-120 ngày' when tuoino>120 then N'6.>120 ngày' end as bucket_detail  
+    from PawnOverdue po  left join ShopDetail shop on shop.code=po.shopcode  
+    where CategoryName like N'%"""+cate+"""%' and po.CREATED= @check_date and shopcode not like N'%TEST%'"""
+    po_motor=pd.read_sql_query(po_motor_str,db)
+    po_motor['code']=po_motor.contractcode.apply(lambda x: x[5:])
+    po=pd.merge(po_motor,write_off[['write_off_period','code']],on='code',how='left')
+    po=pd.merge(po,shop_data,left_on='shopcode',right_on='Mã PGD',how='left')
+    po['area']=po['Tỉnh/TP']
+    po.loc[po['Tỉnh/TP'].str.contains('Hà Nội|TP. Hồ Chí Minh')==False,'area']='Tỉnh'
+    po=pd.merge(po,shop_detail[['shopname','shopage_group']],on='shopname',how='left')
+#     po=pd.merge(pd.merge(po_motor,write_off[['write_off_period','code']],on='code',how='left'),kt_data[['pawnid','papertype', 'kt']],on='pawnid',how='left')
+    po.loc[po.write_off_period.isna(),'write_off_period']=99999999
+    po.loc[po.status==88,'write_off_period']=201912
+    po['previous_write_off_ym']=po.write_off_period
+    po.loc[po.yearmonth.max()==po.write_off_period.astype(int),'previous_write_off_ym']=99999999
+#     po=pd.merge(po,shop_data,left_on='shopname',right_on='PGD',how='left')
+#     bal_pivot=pd.pivot_table(po,index=['created','categoryname','region','previous_write_off_ym'],columns='bucket_detail',values='currentmoney',aggfunc='sum',fill_value=0,margins=True).reset_index()
+#     bal_pivot_ex2019=pd.pivot_table(po[po.write_off_period.astype(int)>201912],index=['created','categoryname','region'],columns='bucket_detail',values='currentmoney',aggfunc='sum',fill_value=0,margins=True).reset_index()
+#     region_bal=pd.pivot_table(po[po.write_off_period.astype(int)>201912],index=['created','categoryname','region','area','shopage_group','shopname','Tỉnh/ Thành phố'],columns='bucket_detail',values='currentmoney',aggfunc='sum',fill_value=0,margins=True).reset_index()
+#     return po,bal_pivot[bal_pivot.created!='All'],bal_pivot_ex2019[bal_pivot_ex2019.created!='All'],region_bal
+    return po[po.write_off_period>201912]
+
+
+
+# po,bal,bal_gross,region_bal=read_balance_data('2020-08-20','Đăng ký')
+
+po=read_balance_data('2021-01-14','Đăng ký')
+# update_data(overdue_wb,'gross_bal',bal_gross)
+# update_data(overdue_wb,'balance',bal)
+
+#po.to_excel('balance_data_20210114.xlsx')
+po.loc[po.area.isna(),'area']='Tỉnh'
+po.loc[(po.area.isna())&(po.region=='Miền Nam')&(po.shopcode.str.contains('SG|HCM')),'area']='TP. Hồ Chí Minh'
+
+po['region']=po['Vùng/Miền']
+po['area']=po['Vùng']
+
+# po.to_excel(r'D:\ERM\Data\Portfolio Management\main\weekly_data\quick_note_data\balance\title_balance_3011.xlsx',index=False)
+
+overview_bal=pd.pivot_table(po[po.write_off_period.astype(int)>201912],index=['created','region','area'],
+               columns='bucket_detail',values='currentmoney',aggfunc='sum',fill_value=0,margins=True,margins_name='sub_total').reset_index()
+
+# overview_bal=po[po.write_off_period.astype(int)>201912].groupby(['region']).apply(lambda df_sub: df_sub.pivot_table(index=['area'],columns=['bucket_detail'],
+#                              values='currentmoney',aggfunc='sum',margins=True,margins_name='sub_total')).reset_index()
+
+overview_bal['dpd_above_0_bal']=overview_bal.sub_total-overview_bal['0.Trong hạn']
+overview_bal['dpd_above_0_rate']=overview_bal.dpd_above_0_bal/overview_bal.sub_total
+overview_bal['dpd_above_10_bal']=overview_bal.sub_total-overview_bal['0.Trong hạn']-overview_bal['1.1-10 ngày']
+overview_bal['dpd_above_10_rate']=overview_bal.dpd_above_10_bal/overview_bal.sub_total
+overview_bal['dpd_above_90_bal']=overview_bal['4.61-90 ngày']+overview_bal['6.>120 ngày']
+overview_bal['dpd_above_90_rate']=overview_bal.dpd_above_90_bal/overview_bal.sub_total
+
+
+par=pd.pivot_table(po[po.write_off_period.astype(int)>201912],index=['created','region','categoryname'],columns='bucket_detail',values='currentmoney',aggfunc=sum,fill_value=0,margins=True).reset_index()
+
+par['0.Trong hạn_rate']=par['0.Trong hạn']/par.All
+par['1.1-30 ngày_rate']=(par['1.1-10 ngày']+par['2.11-30 ngày'])/par.All
+par['2.31-60 ngày_rate']=(par['3.31-60 ngày'])/par.All
+par['3.61-90 ngày_rate']=par['4.61-90 ngày']/par.All
+par['4.91++_rate']=(par['5.91-120 ngày']+par['6.>120 ngày'])/par.All
+
+region_bal=pd.pivot_table(po[po.write_off_period.astype(int)>201912],index=['created','region','area','Tỉnh/TP'],
+               columns='bucket_detail',values='currentmoney',aggfunc='sum',fill_value=0,margins=True,margins_name='all').reset_index()
+region_bal=region_bal[region_bal.created!='all']
+
+region_bal['above_10dpd_rate']=(region_bal['all']-region_bal['0.Trong hạn']-region_bal['1.1-10 ngày'])/region_bal['all']
+
+province_mn=region_bal[region_bal.area=='Tỉnh Nam']
+province_mb=region_bal[region_bal.area=='Tỉnh Bắc']
+province_mt=region_bal[region_bal.area=='Tỉnh Trung']
+
+city_bal=pd.pivot_table(po[(po.write_off_period.astype(int)>201912)&(po.area.str.contains('Tỉnh')==False)],
+               index=['created','area','shopage_group'],columns='bucket_detail',values='currentmoney',aggfunc='sum',
+               margins=True,margins_name='all',fill_value=0).reset_index()
+
+city_bal['above_10dpd_rate']=(city_bal['all']-city_bal['0.Trong hạn']-city_bal['1.1-10 ngày'])/city_bal['all']
+
+data_sheet=qnote_wb.worksheet_by_title('raw')
+
+data_sheet.clear()
+data_sheet.set_dataframe(overview_bal,start=(1,1))
+next_row=overview_bal.shape[0]+4
+data_sheet.set_dataframe(par.sort_values(by='categoryname'),start=(next_row,1))
+next_row+=par.shape[0]+3
+data_sheet.set_dataframe(city_bal,start=(next_row,1))
+next_row+=city_bal.shape[0]+3
+data_sheet.set_dataframe(province_mb.sort_values(by='all',ascending=False),start=(next_row,1))
+data_sheet.set_dataframe(province_mn.sort_values(by='all',ascending=False),start=(next_row,province_mb.shape[1]+2))
+data_sheet.set_dataframe(province_mt.sort_values(by='all',ascending=False),start=(next_row,province_mn.shape[1]+province_mb.shape[1]+4))
+print('Đã hoàn tất cập nhật Data!')
